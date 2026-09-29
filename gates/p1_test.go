@@ -100,4 +100,24 @@ func TestP1AtMostOnce(t *testing.T) {
 	raw, _ := json.Marshal(twin)
 	Emit(t, Row{Prop: 1, Cell: "twin", Scope: "naive no-dedupe snapshot over fixtures/base", ContentHash: "sha256:" + sha256Hex(raw),
 		Basis: "sha256 of the twin document as decoded and re-marshaled", Rows: int64(len(twin["positions"].(map[string]any))), Params: params, Counts: ct, Planted: ptr(m.Planted("p1"))})
+
+	// twin_identity_collapse: the opposite at-most-once failure. The fill
+	// identity key loses trade_id, so every fill on the venue shares the
+	// first fill's identity: the planted duplicate is still absorbed and the
+	// planted collision still refused, but every other distinct fill is
+	// refused as a collision too. The no-dedupe twin above cannot move the
+	// position set (no base-feed position is ever closed, so applying a fill
+	// twice never adds or removes an instrument); this one leaves only the
+	// first fill's instrument held, which is the defect
+	// positions_match_manifest and unevaluable_match_manifest exist to see.
+	collapsed := LoadDoc(t, filepath.Join(FixturesDir, "p1", "twin-identity-collapse", "snapshot.json"))
+	cc := p1Check(collapsed, expected, dupID, colID)
+	SetEquality(cc, "positions_match_manifest", PositionKeys(collapsed), positionsWant)
+	SetEqualityOverUniverse(cc, "unevaluable_match_manifest", UnevaluableInstruments(collapsed), m.Strs("unevaluable_at", "V3"), positionsWant)
+	rawCollapsed, err := json.Marshal(collapsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	Emit(t, Row{Prop: 1, Cell: "twin", Scope: "snapshot over fixtures/base whose fill identity key drops trade_id", ContentHash: "sha256:" + sha256Hex(rawCollapsed),
+		Basis: "sha256 of the twin document as decoded and re-marshaled", Rows: int64(len(collapsed["positions"].(map[string]any))), Params: params, Counts: cc, Planted: ptr(m.Planted("p1", "twin_identity_collapse"))})
 }

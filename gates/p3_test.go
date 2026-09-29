@@ -10,11 +10,12 @@ import (
 
 // threeHistoriesViolation reports 1 when q1, q2, q3 (the AAA quantity at
 // V1, V2, V3, as their canonical decimal strings) do not represent three
-// DISTINCT values, 0 otherwise. Factored out of p3Check so its
-// discriminating power can be exercised directly by
-// TestP3ThreeHistoriesDiscriminates, table-style, without needing a ledger
-// fixture that actually collapses two viewpoints — see that test's comment
-// for why no such fixture exists today.
+// DISTINCT values, 0 otherwise — 1 for any collapse, of two viewpoints or
+// of all three. Factored out of p3Check so its arithmetic can be exercised
+// directly by TestP3ThreeHistoriesDiscriminates, table-style; the
+// viewpoint-ignored twin in TestP3PointInTimeActions drives it through the
+// document path. fixtures/generate.py plants the same predicate
+// (three_histories_violation).
 func threeHistoriesViolation(q1, q2, q3 string) int64 {
 	qtys := map[string]bool{q1: true, q2: true, q3: true}
 	if len(qtys) != 3 {
@@ -26,11 +27,11 @@ func threeHistoriesViolation(q1, q2, q3 string) int64 {
 // p3Check evaluates point-in-time corporate-action folding at three
 // viewpoints (V1: before the action, V2: after the original terms but
 // before the amendment, V3: after the amendment). docs is keyed by
-// viewpoint name and may substitute a leaked/tampered document at any
-// viewpoint (the twin replaces only V2); expected holds the honest golden
-// for each viewpoint. t is used only to fail loudly, with a message naming
-// what was missing, if a document is malformed — never to panic on a bad
-// type assertion.
+// viewpoint name and may carry a twin's document at any viewpoint (each
+// twin replaces the viewpoints it names; the ledger's own documents fill
+// the rest); expected holds the honest golden for each viewpoint. t is
+// used only to fail loudly, with a message naming what was missing, if a
+// document is malformed — never to panic on a bad type assertion.
 func p3Check(t *testing.T, m Manifest, docs map[string]snapshot.Doc, expected map[string]snapshot.Doc) Counts {
 	t.Helper()
 	c := NewCounts("viewpoint_V1", "viewpoint_V2", "viewpoint_V3", "three_histories",
@@ -104,18 +105,14 @@ func p3Check(t *testing.T, m Manifest, docs map[string]snapshot.Doc, expected ma
 	// Asserts the three viewpoints really do yield three DISTINCT AAA
 	// quantities, not merely that each differs from its own golden.
 	//
-	// This check's discriminating power is proven directly by
-	// TestP3ThreeHistoriesDiscriminates, not by any fixture in this repo:
-	// P3's twin leaks the amendment into V2 but does not make its
-	// quantity collide with V1's or V3's ({26, 87, 86} is still three
-	// distinct values), so this check reads 0 on every cell of every gate
-	// row P3 has ever emitted and its 0 here is not itself evidence of
-	// anything. That table test shows the comparator CAN report a
-	// collapse of the three histories into fewer; it does not show the
-	// ledger can be made to produce one — and it does not need to: a fold
-	// that actually collapsed two viewpoints would already be caught by
-	// viewpoint_V1/V2/V3, which compare full document content against the
-	// golden at each viewpoint independently.
+	// It cannot move alone. The three goldens carry three distinct AAA
+	// quantities (fixtures/generate.py dies otherwise), so any document set
+	// that collapses two histories leaves at least one viewpoint off its
+	// golden and moves viewpoint_V1/V2/V3 as well. The viewpoint-ignored
+	// twin (every viewpoint answered with the end-of-feed snapshot) is the
+	// collapse this check exists to report: it reads 1 there, and 0 on the
+	// live row and on every other twin. TestP3ThreeHistoriesDiscriminates
+	// covers the two-viewpoint collapses no twin plants.
 	c.Evaluated["three_histories"] = 1
 	c.Checks["three_histories"] = threeHistoriesViolation(qtyAt["V1"], qtyAt["V2"], qtyAt["V3"])
 	return c
@@ -123,18 +120,16 @@ func p3Check(t *testing.T, m Manifest, docs map[string]snapshot.Doc, expected ma
 
 // TestP3ThreeHistoriesDiscriminates proves threeHistoriesViolation's
 // arithmetic directly — the same shape as TestSetEqualityTable in
-// gates/manifest.go — rather than relying on a planted fixture defect,
-// because P3 has no twin that actually collapses two viewpoints into the
-// same AAA quantity (see the comment on the "three_histories" check inside
-// p3Check). This shows the check CAN detect a collapse; it does not show
-// the ledger CAN produce one.
+// gates/manifest.go. The viewpoint-ignored twin in TestP3PointInTimeActions
+// plants one collapse (all three viewpoints, through real documents); this
+// table also covers each two-viewpoint collapse, which no twin plants.
 func TestP3ThreeHistoriesDiscriminates(t *testing.T) {
 	cases := []struct {
 		name           string
 		q1, q2, q3     string
 		wantViolations int64
 	}{
-		{"three distinct values (the live/twin shape today)", "26", "61", "86", 0},
+		{"three distinct values (the live shape)", "26", "61", "86", 0},
 		{"V1 and V2 collapse", "26", "26", "86", 1},
 		{"V1 and V3 collapse", "26", "61", "26", 1},
 		{"V2 and V3 collapse", "26", "86", "86", 1},
@@ -174,4 +169,37 @@ func TestP3PointInTimeActions(t *testing.T) {
 	raw, _ := json.Marshal(leaked["V2"])
 	Emit(t, Row{Prop: 3, Cell: "twin", Scope: "V2 replaced by a snapshot that leaked the amended terms", ContentHash: "sha256:" + sha256Hex(raw),
 		Basis: "sha256 of the leaked V2 document as decoded and re-marshaled", Rows: 3, Params: params, Counts: ct, Planted: ptr(m.Planted("p3"))})
+
+	// Twins beyond the leak, one per viewpoint check the leak cannot move.
+	// Each substitutes the generator's documents at the viewpoints it names
+	// and keeps the ledger's own at the rest; the planted counts are the
+	// manifest's p3.<key>.
+	p3Twin(t, m, docs, expected, params, "twin_effective_date", "twin-effective-date", []string{"V1", "V2"},
+		"V1 and V2 replaced by snapshots that admitted corporate actions by effective date, not by feed position")
+	p3Twin(t, m, docs, expected, params, "twin_stale_terms", "twin-stale-terms", []string{"V3"},
+		"V3 replaced by a snapshot that never applied the amendment")
+	p3Twin(t, m, docs, expected, params, "twin_viewpoint_ignored", "twin-viewpoint-ignored", []string{"V1", "V2"},
+		"V1 and V2 replaced by the end-of-feed snapshot: the requested viewpoint ignored")
+}
+
+// p3Twin emits one P3 twin row: the generator's documents under
+// fixtures/p3/<dir>/<V>.json replace the ledger's own at each viewpoint in
+// subst, the ledger's documents (docs) fill the rest, and the row is judged
+// against the manifest's p3.<key> plant.
+func p3Twin(t *testing.T, m Manifest, docs, expected map[string]snapshot.Doc, params map[string]any, key, dir string, subst []string, scope string) {
+	t.Helper()
+	twin := map[string]snapshot.Doc{"V1": docs["V1"], "V2": docs["V2"], "V3": docs["V3"]}
+	replaced := map[string]snapshot.Doc{}
+	for _, v := range subst {
+		d := LoadDoc(t, filepath.Join(FixturesDir, "p3", dir, v+".json"))
+		twin[v], replaced[v] = d, d
+	}
+	c := p3Check(t, m, twin, expected)
+	raw, err := json.Marshal(replaced)
+	if err != nil {
+		t.Fatalf("p3 %s: substituted documents do not marshal: %v", key, err)
+	}
+	Emit(t, Row{Prop: 3, Cell: "twin", Scope: scope, ContentHash: "sha256:" + sha256Hex(raw),
+		Basis: "sha256 of the substituted documents, keyed by viewpoint, as decoded and re-marshaled", Rows: 3, Params: params, Counts: c,
+		Planted: ptr(m.Planted("p3", key))})
 }

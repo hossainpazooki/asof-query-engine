@@ -178,6 +178,15 @@ def sym_diff_count(doc_instruments, published_instruments):
     return len(set(doc_instruments) ^ set(published_instruments))
 
 
+def three_histories_violation(q1, q2, q3):
+    """three_histories, defined once: 1 when the AAA quantities at V1, V2, V3
+    are not three distinct values, else 0 -- the same predicate as
+    threeHistoriesViolation in the P3 gate, which reports 1 for any
+    collapse (two viewpoints or all three), never 2.
+    """
+    return 0 if len({q1, q2, q3}) == 3 else 1
+
+
 def assert_unique_ids(records, label):
     """The shared contract requires event `id` to be globally unique within
     a feed. Assert it mechanically for every feed the generator writes,
@@ -209,11 +218,25 @@ def fill_key(p):
 def naive_fold(records, up_to, mode="honest"):
     """Fold records[0:up_to] per the shared contract.
 
-    mode: honest | nodedupe (P1 twin: apply every fill) | leak (P3 twin:
-    resolve amendments from the WHOLE feed, not the visible prefix).
+    mode: honest | nodedupe (P1 twin: apply every fill) | identitycollapse
+    (P1 identity-collapse twin: the dedupe key reads trade_id as null, so
+    every fill on a venue shares one identity) | leak (P3 twin: resolve
+    amendments from the WHOLE feed, not the visible prefix) |
+    effective_date (P3 twin: also admit every action and amendment from
+    beyond the prefix whose `effective` date is on or before the latest
+    `effective` date inside it -- valid time read as knowledge time) |
+    stale_terms (P3 twin: never apply an amendment, so an action keeps the
+    terms it was first published with).
     Returns a full snapshot-schema dict.
     """
     vis = records[:up_to]
+    if mode == "effective_date" and vis:
+        # Fills and prices still come from the prefix; only corporate
+        # actions are admitted by date, the way an as-of join of an action
+        # table on its effective date admits them. feed_seq and
+        # feed_prefix_hash below still name the requested viewpoint.
+        asof = max(r["effective"] for r in vis)
+        vis = vis + [r for r in records[up_to:] if r["type"] in ("action", "action_amendment") and r["effective"] <= asof]
     src_terms = records if mode == "leak" else vis
     terms = {}
     for r in src_terms:
@@ -225,7 +248,7 @@ def naive_fold(records, up_to, mode="honest"):
     # the tiebreak is untested; stating it explicitly here makes it a
     # decision this file makes, not an accident of iteration order.
     for r in src_terms:
-        if r["type"] == "action_amendment":
+        if r["type"] == "action_amendment" and mode != "stale_terms":
             aid = r["payload"]["action_id"]
             if aid not in terms:
                 die("action_amendment %s references action_id %s with no prior action in this prefix" % (r["id"], aid))
@@ -237,7 +260,8 @@ def naive_fold(records, up_to, mode="honest"):
     for r in vis:
         p = r["payload"]
         if r["type"] == "fill":
-            key, ph = fill_key(p), sha(canon(p))
+            key = sha(canon({"trade_id": None, "venue": p["venue"]})) if mode == "identitycollapse" else fill_key(p)
+            ph = sha(canon(p))
             if mode != "nodedupe" and key in seen:
                 if seen[key] == ph:
                     absorbed.append({"event_id": r["id"], "key": key, "seq": r["seq"]})
@@ -471,12 +495,11 @@ def build_p6():
 # shared error. An explicit `[]` cannot be silently right for the wrong
 # reason the way an absent key can.
 #
-# This is a fact about the CURRENT twins, not a structural guarantee: none
-# of twin-fill/twin-price/twin-phantom's mutations touch any instrument's
-# price coverage, so this leaf never differs and `golden_match` needs no
-# adjustment for it. A future P6 twin whose mutation COULD affect
-# unevaluable status (e.g. withholding a price event) would need to check
-# whether it also moves `golden_match`'s count.
+# This is a fact about this golden, not a structural guarantee: twin-fill,
+# twin-price and twin-phantom leave every instrument's price coverage
+# untouched, so this leaf never differs for them. twin-unpriced withholds a
+# price event, so this leaf does differ there, and its pinned golden_match
+# footprint (below) counts it.
 P6_GOLDEN = {
     "cash": -77354, "dividend_income": 4500, "realized_pnl": 18178, "unrealized_pnl": 45368,
     "unevaluable": [],
@@ -589,6 +612,40 @@ def main():
     p1_unevaluable_match = sym_diff_count((u["instrument"] for u in p1twin["unevaluable"]), unevaluable_at["V3"])
     write_json(P("p1", "twin", "snapshot.json"), p1twin)
 
+    # ----- P1 second twin: fill identity collapse -----
+    # The no-dedupe twin above applies a fill twice; it cannot change WHICH
+    # instruments are held, because no base-feed position is ever closed
+    # (every random sell is at most half the held quantity), so it publishes
+    # positions_match_manifest = unevaluable_match_manifest = 0 and credits
+    # neither. This twin is the opposite at-most-once failure: the dedupe
+    # identity loses a component (trade_id read as null), so every fill on the
+    # venue shares the first fill's identity. The planted duplicate is still
+    # absorbed and the planted collision still refused -- measured below, not
+    # assumed -- but every other distinct fill is refused as a collision too,
+    # so only the first fill's instrument keeps a position, and the withheld
+    # instrument's unevaluable entry disappears with its position.
+    p1ic = naive_fold(recs, V3, mode="identitycollapse")
+    first_fill_inst = next(r for r in recs if r["type"] == "fill")["payload"]["instrument"]
+    if first_fill_inst in WITHHELD:
+        die("P1 identity-collapse twin: the first fill's instrument %s is withheld, so the unevaluable leg of this plant would not diverge" % first_fill_inst)
+    if sorted(p1ic["positions"]) != [first_fill_inst]:
+        die("P1 identity-collapse twin must hold only the first fill's instrument %s, holds %r" % (first_fill_inst, sorted(p1ic["positions"])))
+    p1ic_duplicate_absorbed = 0 if any(a["event_id"] == dup["id"] for a in p1ic["absorbed"]) else 1
+    p1ic_collision_refused = 0 if any(r["event_id"] == col["id"] and r["kind"] == "collision" for r in p1ic["refusals"]) else 1
+    if p1ic_duplicate_absorbed or p1ic_collision_refused:
+        die("P1 identity-collapse twin is not confined to over-refusal: duplicate_absorbed=%d collision_refused=%d, want 0/0" % (p1ic_duplicate_absorbed, p1ic_collision_refused))
+    p1ic_position_after_dedupe = len(leaf_diff(expected_view(honest[V3]), p1ic))
+    p1ic_positions_match = sym_diff_count(p1ic["positions"].keys(), positions_at["V3"])
+    p1ic_unevaluable_match = sym_diff_count((u["instrument"] for u in p1ic["unevaluable"]), unevaluable_at["V3"])
+    # Pinned exactly by construction, not by seed: one instrument held out of
+    # positions_at.V3, and that instrument priced, so every published
+    # unevaluable instrument is missing.
+    if p1ic_positions_match != len(positions_at["V3"]) - 1:
+        die("P1 identity-collapse twin positions_match_manifest must be %d, got %d" % (len(positions_at["V3"]) - 1, p1ic_positions_match))
+    if p1ic_unevaluable_match != len(unevaluable_at["V3"]) or p1ic_unevaluable_match == 0:
+        die("P1 identity-collapse twin unevaluable_match_manifest must be %d (and nonzero), got %d" % (len(unevaluable_at["V3"]), p1ic_unevaluable_match))
+    write_json(P("p1", "twin-identity-collapse", "snapshot.json"), p1ic)
+
     # ----- P2 twins -----
     mut = [Ev(e.type, e.id, e.effective, dict(e.payload)) for e in evs]
     # Mutation target chosen by PREDICATE (trade_id), not a hardcoded index:
@@ -662,6 +719,51 @@ def main():
     if break_at != si + 2:
         die("P2 tampered twin chain break expected at seq %d, detected %r" % (si + 2, break_at))
 
+    # P2 twins report the live cell's own three checks under the live cell's
+    # names: the gate runs one function for the live cell and every twin, so
+    # a nonzero count means, in every row, that the feed or the binary under
+    # test FAILED that check. chain_verifies' denominator is the number of
+    # records the gate's chain walk EXAMINED: end_seq in every P2 row whose
+    # chain verifies end to end, and the break seq in the tampered twin, whose
+    # walk stops there and never reaches the records after it. (Corrected
+    # 2026-09-15: this comment said the denominator was end_seq in every P2
+    # row. It was end_seq in every row because the gate read it from this
+    # manifest instead of from the walk, which overstated the tampered twin's
+    # universe by the records the walk never looked at.) Every P2 feed still
+    # has to carry N records, for a different reason: the folds the twins
+    # diverge from are folds of the same prefix length, so a twin feed of a
+    # different length would differ from base for a reason nobody planted.
+    for label, ls in (("mutated", mut_lines), ("reordered", reo_lines), ("tampered", tam)):
+        if len(ls) != N:
+            die("P2 %s feed has %d records, want end_seq %d" % (label, len(ls), N))
+    # chain_verifies: first_chain_break is this file's own chain walk; it is
+    # None for base, mutated and reordered and si + 2 for tampered (each
+    # guarded above). fresh_process_identical and pinned_hash_match are not
+    # published for tampered: the CLI refuses a feed whose chain does not
+    # verify, so there is no snapshot to replay or pin, and a 0 would claim
+    # they were checked and matched.
+    # pinned_hash_match: the mutated and reordered folds diverge from the base
+    # fold in ledger state, not only in feed_prefix_hash (guarded above), so
+    # their snapshots cannot hash to the base pin.
+    # fresh_process_identical 0 for mutated and reordered: their replays run
+    # the production binary the live cell runs. Nothing in this file can run a
+    # Go process, so this 0 is the contract rather than a measurement; the
+    # gate measures it, and Emit refuses the row if it is anything else.
+    p2_twin_mutated = {"chain_verifies": int(mut_break is not None), "fresh_process_identical": 0,
+                       "pinned_hash_match": int(canon(expected_view(mut_fold)) != canon(expected_view(honest[V3])))}
+    p2_twin_reordered = {"chain_verifies": int(reo_break is not None), "fresh_process_identical": 0,
+                         "pinned_hash_match": int(canon(expected_view(reo_fold)) != canon(expected_view(honest[V3])))}
+    p2_twin_tampered = {"chain_verifies": int(break_at is not None)}
+    # per_process_nonce_in_snapshot replays the BASE feed (its chain holds,
+    # guarded above, so chain_verifies 0) with a twin binary that adds a
+    # "replay_nonce" field drawn from a CSPRNG in every process. The base
+    # snapshot has no such field, so the twin's bytes cannot hash to the pin
+    # (pinned_hash_match 1), and two processes draw two 128-bit nonces, equal
+    # with probability 2^-128 (fresh_process_identical 1).
+    if "replay_nonce" in honest[V3]:
+        die("P2 nondeterministic twin: the base snapshot already carries a replay_nonce field")
+    p2_twin_nondet = {"chain_verifies": int(intact_break is not None), "fresh_process_identical": 1, "pinned_hash_match": 1}
+
     # ----- P3 twin: leak -----
     leak = naive_fold(recs, V2, mode="leak")
     k3_paths = leaf_diff(expected_view(honest[V2]), leak)
@@ -696,7 +798,83 @@ def main():
     if viewpoint_V3_paths:
         die("viewpoint_V3 must be zero: honest fold disagrees with its own written expected/V3.json at %r" % viewpoint_V3_paths)
     viewpoint_V1, viewpoint_V3 = len(viewpoint_V1_paths), len(viewpoint_V3_paths)
-    three_histories = 3 - len({q1, q2, q3})
+    # Measured from the documents this twin's row is built from (honest V1
+    # and V3, the leaked V2) with the gate's own predicate. It was
+    # 3 - len({q1, q2, q3}) over the HONEST quantities: it never read the
+    # leaked V2, and it would publish 2 for a three-way collapse the gate
+    # reports as 1.
+    three_histories = three_histories_violation(q1, leak["positions"]["AAA"]["qty"], q3)
+
+    # ----- P3 twins beyond the leak -----
+    # The leak moves only viewpoint_V2. Each twin below plants a point-in-
+    # time corporate-action defect whose footprint lands where the leak's
+    # cannot, as documents the gate substitutes for the ledger's own at the
+    # viewpoints the twin names; every other viewpoint keeps the ledger's
+    # document, which the live row shows equal to its golden. Every check
+    # p3Check computes is published, measured from the substituted
+    # documents; a viewpoint a twin does not substitute publishes its live
+    # leg, measured from the written expected file as above.
+    views = (("V1", V1), ("V2", V2), ("V3", V3))
+    live_leg = {}
+    for name, v in views:
+        with open(P("base", "expected", name + ".json")) as fh:
+            leg_paths = leaf_diff(expected_view(honest[v]), json.load(fh))
+        if leg_paths:
+            die("P3 live leg %s must be zero: honest fold disagrees with its own written expected/%s.json at %r" % (name, name, leg_paths))
+        live_leg[name] = len(leg_paths)
+
+    def p3_twin_violations(label, subst):
+        qty = {name: (subst[name] if name in subst else honest[v])["positions"]["AAA"]["qty"] for name, v in views}
+        ev = {"viewpoint_" + name: (len(leaf_diff(expected_view(honest[v]), subst[name])) if name in subst else live_leg[name])
+              for name, v in views}
+        ev["three_histories"] = three_histories_violation(qty["V1"], qty["V2"], qty["V3"])
+        # The unsubstituted legs add 0 here by construction: positions_at and
+        # unevaluable_at are those legs' own honest sets.
+        ev["positions_match_manifest"] = sum(sym_diff_count(d["positions"].keys(), positions_at[n]) for n, d in subst.items())
+        ev["unevaluable_match_manifest"] = sum(sym_diff_count((u["instrument"] for u in d["unevaluable"]), unevaluable_at[n])
+                                               for n, d in subst.items())
+        if not any(ev.values()):
+            die("P3 %s twin has no footprint" % label)
+        return ev
+
+    # Stale original terms: the mirror of the leak. The leak reads the
+    # amendment before the feed publishes it; this fold never applies it,
+    # so at V3 the split keeps its original ratio. V1 and V2 precede the
+    # amendment, so the same mode must reproduce the honest fold there.
+    stale = {name: naive_fold(recs, v, mode="stale_terms") for name, v in views}
+    stale_off = {name: leaf_diff(expected_view(honest[v]), stale[name]) for name, v in views}
+    if stale_off["V1"] or stale_off["V2"] or not stale_off["V3"]:
+        die("P3 stale-terms twin must diverge at V3 only: V1 %r, V2 %r, V3 %r" % (stale_off["V1"], stale_off["V2"], stale_off["V3"]))
+    p3_stale = p3_twin_violations("stale-terms", {"V3": stale["V3"]})
+    write_json(P("p3", "twin-stale-terms", "V3.json"), stale["V3"])
+
+    # Corporate actions admitted by effective date: valid time read as
+    # knowledge time. At V1 the split (published at action.seq, effective
+    # the same day as V1's last event) and its amendment (published at
+    # amendment_seq, back-dated to the split's effective date) are both
+    # admitted; at V2 the back-dated amendment is. At V3 nothing lies beyond
+    # the prefix, so the mode must reproduce the honest fold there.
+    effd = {name: naive_fold(recs, v, mode="effective_date") for name, v in views}
+    effd_off = {name: leaf_diff(expected_view(honest[v]), effd[name]) for name, v in views}
+    if not effd_off["V1"] or not effd_off["V2"] or effd_off["V3"]:
+        die("P3 effective-date twin must diverge at V1 and V2 only: V1 %r, V2 %r, V3 %r" % (effd_off["V1"], effd_off["V2"], effd_off["V3"]))
+    p3_effd = p3_twin_violations("effective-date", {"V1": effd["V1"], "V2": effd["V2"]})
+    write_json(P("p3", "twin-effective-date", "V1.json"), effd["V1"])
+    write_json(P("p3", "twin-effective-date", "V2.json"), effd["V2"])
+
+    # Viewpoint ignored: the as-of read drops its seq and answers V1 and V2
+    # with what the ledger knows at end_seq, so the pre-split, post-split
+    # and post-amendment histories collapse into one. This is the collapse
+    # three_histories exists to report, and it cannot be planted without
+    # moving viewpoint_V1/V2 too: the three goldens carry three distinct AAA
+    # quantities (asserted above), so any collapse leaves a viewpoint off its
+    # golden. Pinned, since the collapse is by construction.
+    head = naive_fold(recs, V3)
+    p3_head = p3_twin_violations("viewpoint-ignored", {"V1": head, "V2": head})
+    if p3_head["three_histories"] != 1 or p3_head["viewpoint_V1"] == 0 or p3_head["viewpoint_V2"] == 0 or p3_head["viewpoint_V3"] != 0:
+        die("P3 viewpoint-ignored twin must collapse the three histories and move viewpoint_V1 and viewpoint_V2 only: %r" % p3_head)
+    write_json(P("p3", "twin-viewpoint-ignored", "V1.json"), head)
+    write_json(P("p3", "twin-viewpoint-ignored", "V2.json"), head)
 
     # ----- P4 twin: silent zero + stale carry-forward -----
     p4 = json.loads(canon(honest[V3]))
@@ -794,6 +972,35 @@ def main():
         die("P4 silent-omission twin is not confined: positions_match_manifest=%d, unevaluable_match_manifest=%d, want 0/0" % (p4b_positions_match, p4b_unevaluable_match))
     write_json(P("p4", "twin-silent-omission", "snapshot.json"), p4b)
 
+    # ----- P4 third twin: unpriceable position suppressed -----
+    # Both twins above keep every position key -- they fabricate or drop a
+    # VALUATION, never a holding -- so both publish positions_match_manifest
+    # = 0 and credit nothing for it. The remaining way to fail open on an
+    # unpriceable holding is to suppress the holding itself: the withheld
+    # instrument is removed from `positions` AND from `unevaluable`, so the
+    # snapshot no longer admits it holds anything it cannot price. Nothing
+    # else moves: a null valuation contributes nothing to unrealized_pnl, and
+    # cash/realized_pnl are ledger facts the suppression does not touch.
+    # undeclared_unpriced cannot see this (no null valuation is left to be
+    # undeclared) -- confirmed below, not assumed.
+    supp = WITHHELD[0]
+    p4c = json.loads(canon(honest[V3]))
+    if supp not in p4c["positions"] or p4c["positions"][supp]["valuation"] is not None:
+        die("P4 suppression twin needs %s held with a null valuation to suppress" % supp)
+    del p4c["positions"][supp]
+    p4c["unevaluable"] = [u for u in p4c["unevaluable"] if u["instrument"] != supp]
+    if p4c["unrealized_pnl"] != sum(p["valuation"]["unrealized"] for p in p4c["positions"].values() if p["valuation"]):
+        die("P4 suppression twin moved unrealized_pnl; suppressing an unvalued position must not")
+    p4c_undeclared_unpriced = undeclared_unpriced(p4c)
+    p4c_positions_match = sym_diff_count(p4c["positions"].keys(), positions_at["V3"])
+    p4c_unevaluable_match = sym_diff_count((u["instrument"] for u in p4c["unevaluable"]), unevaluable_at["V3"])
+    # Pinned exactly (one holding suppressed, one declaration gone with it).
+    if p4c_positions_match != 1 or p4c_unevaluable_match != 1:
+        die("P4 suppression twin must suppress exactly one holding and its declaration: positions_match_manifest=%d unevaluable_match_manifest=%d, want 1/1" % (p4c_positions_match, p4c_unevaluable_match))
+    if p4c_undeclared_unpriced != 0:
+        die("P4 suppression twin unexpectedly trips undeclared_unpriced: %d" % p4c_undeclared_unpriced)
+    write_json(P("p4", "twin-unpriced-suppressed", "snapshot.json"), p4c)
+
     # ----- P5 twin: drift -----
     honest_st = statement(honest[V3])
     st = statement(honest[V3])
@@ -832,12 +1039,15 @@ def main():
     write_json(P("p6", "golden.json"), P6_GOLDEN)
     # P6 has no positions_at/unevaluable_at of its own (those are base-feed
     # viewpoint keys), so its "manifest" reference is the honest P6 fold
-    # itself, measured here rather than assumed -- P6_GOLDEN declares
-    # `positions` but no `unevaluable` key at all, so leaf_diff's golden-
-    # keys-only walk above never even inspects doc["unevaluable"]; deriving
-    # the expected unevaluable set from the honest fold closes that same
-    # blind spot for P6 that positions_at/unevaluable_at closed for the base
-    # feed.
+    # itself, measured here rather than assumed. (Corrected 2026-09-15: this
+    # comment said P6_GOLDEN declared `positions` but no `unevaluable` key at
+    # all, so leaf_diff's golden-keys-only walk never inspected
+    # doc["unevaluable"]. P6_GOLDEN now states `unevaluable: []` explicitly --
+    # see its derivation above -- so the walk does inspect that leaf, and
+    # twin-unpriced's pinned footprint below counts it.) Deriving the expected
+    # unevaluable set from the honest fold is still what gives P6 a set-
+    # equality reference per instrument, the way positions_at/unevaluable_at
+    # do for the base feed; leaf_diff compares one leaf, not two sets.
     p6_expected_positions = sorted(p6_honest["positions"].keys())
     p6_expected_unevaluable = sorted(u["instrument"] for u in p6_honest["unevaluable"])
     tf = [Ev(e.type, e.id, e.effective, dict(e.payload)) for e in p6]
@@ -868,6 +1078,39 @@ def main():
     p6price_positions_match = sym_diff_count(p6_price_fold["positions"].keys(), p6_expected_positions)
     p6price_unevaluable_match = sym_diff_count((u["instrument"] for u in p6_price_fold["unevaluable"]), p6_expected_unevaluable)
     write_lines(P("p6", "twin-price", "feed.jsonl"), lp)
+
+    # ----- P6 twin: price event withheld -----
+    # twin-fill, twin-price and twin-phantom all leave every instrument
+    # priced, so each publishes unevaluable_match_golden = 0 and none credits
+    # it. This twin withholds the first price event (the one twin-price
+    # perturbs; chosen by predicate, not index): the fold must then report
+    # that instrument unevaluable, which P6_GOLDEN (every instrument priced,
+    # "unevaluable": [] stated) does not. Same shape as twin-fill/twin-price:
+    # one input event changed, the golden unchanged. The events after it
+    # re-chain, so the twin feed is not a prefix of the live feed.
+    wi = next(i for i, e in enumerate(p6) if e.type == "price")
+    wi_inst, wi_seq = p6[wi].payload["instrument"], wi + 1
+    tu = [Ev(e.type, e.id, e.effective, dict(e.payload)) for i, e in enumerate(p6) if i != wi]
+    lu, ru = chain(tu)
+    assert_unique_ids(ru, "P6 twin-unpriced feed")
+    if lu == l6[:len(lu)]:
+        die("P6 twin-unpriced feed is a prefix of the live feed; withholding the last event would only truncate it")
+    p6_unpriced_fold = naive_fold(ru, len(ru))
+    k6c_paths = leaf_diff(P6_GOLDEN, p6_unpriced_fold)
+    k6c = len(k6c_paths)
+    # Pinned by path, not only by count: exactly the instrument's two golden
+    # valuation leaves (golden carries no price_seq), unrealized_pnl, and the
+    # unevaluable leaf itself.
+    k6c_want = sorted(["$.positions.%s.valuation.price" % wi_inst, "$.positions.%s.valuation.unrealized" % wi_inst, "$.unevaluable", "$.unrealized_pnl"])
+    if sorted(k6c_paths) != k6c_want:
+        die("P6 unpriced twin footprint must be exactly %r, got %r" % (k6c_want, sorted(k6c_paths)))
+    p6unpriced_positions_match = sym_diff_count(p6_unpriced_fold["positions"].keys(), p6_expected_positions)
+    p6unpriced_unevaluable_match = sym_diff_count((u["instrument"] for u in p6_unpriced_fold["unevaluable"]), p6_expected_unevaluable)
+    if p6unpriced_positions_match != 0:
+        die("P6 unpriced twin is not confined to valuation: positions_match_golden measured %d, want 0" % p6unpriced_positions_match)
+    if p6unpriced_unevaluable_match != 1:
+        die("P6 unpriced twin must make exactly one instrument unevaluable, got a symmetric difference of %d" % p6unpriced_unevaluable_match)
+    write_lines(P("p6", "twin-unpriced", "feed.jsonl"), lu)
 
     # ----- P6 twin: phantom position (fabricates a position with no fill
     # behind it) -----
@@ -973,13 +1216,22 @@ def main():
                "collision": {"seq": col["seq"], "event_id": col["id"], "of_seq": col_of_seq, "key": fill_key(col["payload"])},
                "twin": {"mutation": "naive_fold_no_dedupe", "mutated_rows": 2,
                         "expected_violations": {"duplicate_absorbed": 1, "collision_refused": 1, "position_after_dedupe": k1,
-                                                 "positions_match_manifest": p1_positions_match, "unevaluable_match_manifest": p1_unevaluable_match}}},
+                                                 "positions_match_manifest": p1_positions_match, "unevaluable_match_manifest": p1_unevaluable_match}},
+               "twin_identity_collapse": {"mutation": "fill_identity_key_drops_trade_id",
+                                          "expected_violations": {"duplicate_absorbed": p1ic_duplicate_absorbed, "collision_refused": p1ic_collision_refused,
+                                                                   "position_after_dedupe": p1ic_position_after_dedupe,
+                                                                   "positions_match_manifest": p1ic_positions_match, "unevaluable_match_manifest": p1ic_unevaluable_match}}},
         "p2": {"mutated": {"seq": mi + 1}, "reordered": {"seqs": [bi + 1, si + 1]}, "tampered": {"seq": si + 1, "break_at_seq": si + 2},
-               "twin": {"mutation": "mutate_reorder_tamper", "mutated_rows": 3,
-                        "expected_violations": {"snapshot_hash_diverges_mutated": 1, "snapshot_hash_diverges_reordered": 1, "chain_break_detected": 1}}},
+               "twin_mutated": {"mutation": "fill_price_mutated_rechained", "mutated_rows": 1, "expected_violations": p2_twin_mutated},
+               "twin_reordered": {"mutation": "buy_and_split_reordered_rechained", "mutated_rows": 2, "expected_violations": p2_twin_reordered},
+               "twin_tampered": {"mutation": "split_ratio_edited_not_rechained", "mutated_rows": 1, "expected_violations": p2_twin_tampered},
+               "twin_nondeterministic": {"mutation": "per_process_nonce_in_snapshot", "mutated_rows": 0, "expected_violations": p2_twin_nondet}},
         "p3": {"twin": {"mutation": "leak_amended_terms_at_V2", "mutated_rows": 1,
                         "expected_violations": {"viewpoint_V1": viewpoint_V1, "viewpoint_V2": k3, "viewpoint_V3": viewpoint_V3, "three_histories": three_histories,
-                                                 "positions_match_manifest": p3_positions_match, "unevaluable_match_manifest": p3_unevaluable_match}}},
+                                                 "positions_match_manifest": p3_positions_match, "unevaluable_match_manifest": p3_unevaluable_match}},
+               "twin_effective_date": {"mutation": "actions_admitted_by_effective_date", "mutated_rows": 2, "expected_violations": p3_effd},
+               "twin_stale_terms": {"mutation": "stale_original_terms_at_V3", "mutated_rows": 1, "expected_violations": p3_stale},
+               "twin_viewpoint_ignored": {"mutation": "viewpoint_ignored_end_of_feed_served", "mutated_rows": 2, "expected_violations": p3_head}},
         "p4": {"withheld": WITHHELD, "stale_instrument": "DDD", "stale_from": "BBB",
                "twin": {"mutation": "silent_zero_and_stale_carry_forward", "mutated_rows": 2,
                         "expected_violations": {"silent_zero": silent_zero_footprint, "stale_carry_forward": stale_carry_footprint,
@@ -987,7 +1239,10 @@ def main():
                                                  "undeclared_unpriced": p4_undeclared_unpriced}},
                "twin_silent_omission": {"instrument": "DDD", "mutation": "valuation_omitted_without_declaring_unevaluable",
                                          "expected_violations": {"undeclared_unpriced": p4b_undeclared_unpriced,
-                                                                  "positions_match_manifest": p4b_positions_match, "unevaluable_match_manifest": p4b_unevaluable_match}}},
+                                                                  "positions_match_manifest": p4b_positions_match, "unevaluable_match_manifest": p4b_unevaluable_match}},
+               "twin_unpriced_suppressed": {"instrument": supp, "mutation": "unpriceable_position_suppressed",
+                                            "expected_violations": {"positions_match_manifest": p4c_positions_match, "unevaluable_match_manifest": p4c_unevaluable_match,
+                                                                     "undeclared_unpriced": p4c_undeclared_unpriced}}},
         "p5": {"drift": {"instrument": "AAA", "field": "cost_basis", "delta": drift},
                "twin": {"mutation": "cost_basis_drift", "mutated_rows": 1, "expected_violations": {"field_mismatch": field_mismatch}}},
         "p6": {"end_seq": len(r6),
@@ -996,7 +1251,9 @@ def main():
                "twin_price": {"seq": 12, "mutation": "price_plus_one",
                               "expected_violations": {"golden_match": 3, "positions_match_golden": p6price_positions_match, "unevaluable_match_golden": p6price_unevaluable_match}},
                "twin_phantom": {"instrument": "ZZZ", "mutation": "invented_untraded_position",
-                                 "expected_violations": {"positions_match_golden": p6phantom_positions_match, "unevaluable_match_golden": p6phantom_unevaluable_match}}},
+                                 "expected_violations": {"positions_match_golden": p6phantom_positions_match, "unevaluable_match_golden": p6phantom_unevaluable_match}},
+               "twin_unpriced": {"seq": wi_seq, "instrument": wi_inst, "mutation": "price_event_withheld",
+                                 "expected_violations": {"golden_match": k6c, "positions_match_golden": p6unpriced_positions_match, "unevaluable_match_golden": p6unpriced_unevaluable_match}}},
         "p7": {"viewpoints": p7_viewpoints, "wrong_feed": "p2/mutated/feed.jsonl",
                "twin_wrong_feed": {"mutation": "wrong_feed_served_as_base", "mutated_rows": 1,
                                    "expected_violations": {"head_matches_local": p7_head, "snapshot_rehash_matches_claimed": 0,

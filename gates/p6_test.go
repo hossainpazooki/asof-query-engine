@@ -2,6 +2,7 @@ package gates
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -37,14 +38,12 @@ func TestP6PortfolioMath(t *testing.T) {
 	// gets a price event by end_seq, so nothing is unevaluable), not silence.
 	// That closes the case where a doc entirely omits a real unevaluable
 	// entry: want is a stated [] rather than an absent key defaulting to [].
-	// It is still a fact about THIS golden and THESE planted mutations
-	// (fill_qty_plus_one, price_plus_one), not a structural guarantee: a
-	// future P6 twin whose mutation could plausibly push an instrument into
-	// unevaluable status would need to account for this leaf explicitly —
-	// both in the mutation's effect on unevWant/got here and in the
-	// manifest's golden_match expected_violations, since the new leaf adds
-	// one to Leaves(golden) (16 -> 17) and would carry its own mismatch if
-	// such a mutation ever caused doc and golden to disagree on it.
+	// It is a fact about THIS golden, not a structural guarantee:
+	// fill_qty_plus_one, price_plus_one and invented_untraded_position leave
+	// every instrument priced, so this leaf never differs for them;
+	// price_event_withheld (twin_unpriced, below) does push an instrument
+	// into unevaluable status, and its planted golden_match count includes
+	// this leaf's mismatch alongside the unevaluable_match_golden it drives.
 	unevWant := UnevaluableInstruments(golden)
 
 	viewpoint := m.Int("p6", "end_seq")
@@ -108,4 +107,28 @@ func TestP6PortfolioMath(t *testing.T) {
 		Basis: "sha256 of the twin document as decoded and re-marshaled", Rows: int64(len(positions)),
 		Params: map[string]any{"instrument": m.Str("p6", "twin_phantom", "instrument"), "viewpoint": viewpoint},
 		Counts: cph, Planted: ptr(m.Planted("p6", "twin_phantom"))})
+
+	// twin_unpriced: the first price event is withheld from the feed (the
+	// event twin_price perturbs), so the ledger must report that instrument
+	// unevaluable -- which golden, every instrument priced and "unevaluable":
+	// [] stated, does not. Every other twin leaves each instrument priced, so
+	// this is the only one that drives unevaluable_match_golden. Exactly the
+	// instrument's valuation leaves, unrealized_pnl and the unevaluable leaf
+	// may move; anything else moving is a real defect, not a false alarm.
+	unpricedInst := m.Str("p6", "twin_unpriced", "instrument")
+	unpriced := ReadFixture(t, "p6/twin-unpriced/feed.jsonl", -1)
+	cu, msu := p6Check(unpriced.Doc, golden)
+	for _, x := range msu {
+		switch x.Path {
+		case "positions." + unpricedInst + ".valuation.price", "positions." + unpricedInst + ".valuation.unrealized", "unrealized_pnl", "unevaluable":
+		default:
+			t.Fatalf("withheld price moved an unrelated field: %+v", x)
+		}
+	}
+	SetEquality(cu, "positions_match_golden", PositionKeys(unpriced.Doc), positionsWant)
+	SetEqualityOverUniverse(cu, "unevaluable_match_golden", UnevaluableInstruments(unpriced.Doc), unevWant, positionsWant)
+	Emit(t, Row{Prop: 6, Cell: "twin", Scope: fmt.Sprintf("fixtures/p6 with the %s price event withheld", unpricedInst), ContentHash: unpriced.Hash,
+		Basis: "sha256 of canonical snapshot bytes", Rows: int64(len(unpriced.State.Positions)),
+		Params: map[string]any{"withheld_seq": m.Int("p6", "twin_unpriced", "seq"), "instrument": unpricedInst, "viewpoint": unpriced.Seq},
+		Counts: cu, Planted: ptr(m.Planted("p6", "twin_unpriced"))})
 }

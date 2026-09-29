@@ -246,9 +246,11 @@ def twin_ok(r):
 def claimable(cell):
     live = cell["live"]
     twins = cell["twin"]
-    # Exactly one live row, GREEN; one or more twin rows (P6 emits three:
-    # twin_fill, twin_price, twin_phantom -- distinguished by scope/planted,
-    # not by cell, since Emit only ever writes cell "live" or "twin"), and
+    # Exactly one live row, GREEN; one or more twin rows (P6 emits four:
+    # twin_fill, twin_price, twin_phantom, twin_unpriced -- distinguished by
+    # scope/planted, not by cell, since Emit only ever writes "live" or
+    # "twin". Corrected 2026-09-15: this said three, before twin_unpriced.
+    # Nothing here counts twins; gates/expect.json names them), and
     # EVERY twin row must independently check out RED-as-planted. And per
     # check: every key the live row reports must be set nonzero by at least
     # one of those twins (unfalsified() empty), or the live row's 0 on that
@@ -274,13 +276,15 @@ def duplicate_msgs(prop, cell):
     # "live" has exactly one legitimate row per property (there is only one
     # live cell), so any count above 1 is a duplicate by construction -- no
     # further key is needed. "twin" can legitimately hold more than one row
-    # (P6 emits three: twin_fill, twin_price, twin_phantom), all sharing the
-    # same surface and cell, so cell alone cannot distinguish a genuine
-    # second twin from a duplicated one. planted.mutation is the field that
-    # actually varies across P6's three twins (verified against the emitted
-    # rows and fixtures/base/manifest.json: fill_qty_plus_one,
-    # price_plus_one, invented_untraded_position -- one distinct mutation
-    # string per twin, for every property, not just P6) and Emit requires
+    # (P6 emits four: twin_fill, twin_price, twin_phantom, twin_unpriced --
+    # corrected 2026-09-15, this said three before twin_unpriced), all
+    # sharing the same surface and cell, so cell alone cannot distinguish a
+    # genuine second twin from a duplicated one. planted.mutation is the
+    # field that actually varies across P6's twins (verified against the
+    # emitted rows and fixtures/base/manifest.json: fill_qty_plus_one,
+    # price_plus_one, invented_untraded_position, price_event_withheld -- one
+    # distinct mutation string per twin, for every property, not just P6) and
+    # Emit requires
     # Planted on every twin row, so it is always present. Grouping twin rows
     # by mutation and flagging any group of size > 1 catches a duplicated
     # twin without needing to know in advance how many twins a property

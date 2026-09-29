@@ -263,4 +263,25 @@ func TestP4FailClosedValuation(t *testing.T) {
 	rawOmitted, _ := json.Marshal(omitted)
 	Emit(t, Row{Prop: 4, Cell: "twin", Scope: "snapshot with DDD's valuation silently dropped, never declared unevaluable", ContentHash: "sha256:" + sha256Hex(rawOmitted),
 		Basis: "sha256 of the twin document as decoded and re-marshaled", Rows: int64(len(omitted["positions"].(map[string]any))), Params: params, Counts: co, Planted: ptr(m.Planted("p4", "twin_silent_omission"))})
+
+	// twin_unpriced_suppressed: both twins above keep every position key --
+	// they fabricate or drop a VALUATION, never a holding -- so
+	// positions_match_manifest reads 0 on both. The remaining way to fail
+	// open on an unpriceable holding is to suppress the holding itself: the
+	// withheld instrument is removed from "positions" AND from "unevaluable".
+	// undeclared_unpriced cannot see it (no null valuation is left to be
+	// undeclared); only the two set checks can. Same three checks as
+	// twin_silent_omission, for the same reason: p4Check plants nothing here.
+	suppressedInst := m.Str("p4", "twin_unpriced_suppressed", "instrument")
+	suppressed := LoadDoc(t, filepath.Join(FixturesDir, "p4", "twin-unpriced-suppressed", "snapshot.json"))
+	cs := NewCounts("positions_match_manifest", "unevaluable_match_manifest", "undeclared_unpriced")
+	SetEquality(cs, "positions_match_manifest", PositionKeys(suppressed), positionsWant)
+	SetEqualityOverUniverse(cs, "unevaluable_match_manifest", UnevaluableInstruments(suppressed), unevWant, positionsWant)
+	SetEqualityOverUniverse(cs, "undeclared_unpriced", nullValuationInstruments(suppressed), UnevaluableInstruments(suppressed), positionsWant)
+	rawSuppressed, err := json.Marshal(suppressed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	Emit(t, Row{Prop: 4, Cell: "twin", Scope: fmt.Sprintf("snapshot with the unpriceable %s position suppressed from positions and unevaluable", suppressedInst), ContentHash: "sha256:" + sha256Hex(rawSuppressed),
+		Basis: "sha256 of the twin document as decoded and re-marshaled", Rows: int64(len(suppressed["positions"].(map[string]any))), Params: params, Counts: cs, Planted: ptr(m.Planted("p4", "twin_unpriced_suppressed"))})
 }
