@@ -51,3 +51,10 @@ session writes a new entry, never edits an old one.
   changed every run); `ok conformance pack agrees: claimable=6` over 27 rows,
   no live row changed; P3 ruled PARTIAL by construction; ALL UNCOMMITTED;
   next = commit and watch CI.
+- [2026-09-29 -- ledger-move-and-engine-design](2026-09-29-ledger-move-and-engine-design.md)
+  -- the twins build landed (`6ddc4f6`); the read-engine design is committed
+  with sixteen amendments, five of them unruled; build step 1 of 6 is done: the
+  Go module and its Go gate code are under `ledger/` (`d3e216a`), the verdict
+  rows are unchanged outside three run fields, CI is green on `4fa75b4`; the
+  repository is renamed `asof-query-engine`; next = rulings on A12-A16, then
+  the effective-date axis in Go.
