@@ -42,3 +42,12 @@ session writes a new entry, never edits an old one.
   property (`ok conformance pack agrees: claimable=2`); five properties
   PARTIAL on unfalsified checks; ALL UNCOMMITTED; next = commit, then twins
   (or rulings) for the unfalsified checks.
+- [2026-09-15 -- twins-for-unfalsified-checks](2026-09-15-twins-for-unfalsified-checks.md)
+  -- supersedes the previous entry's Open/next item 2: six new twin rows and a
+  twin replayer binary drive every unfalsified check of P1, P2, P4 and P6, and
+  P2's combined twin is split under the live row's own check names (reversing
+  C29); three defects in the new gate code found and fixed (a gate that created
+  a 0-byte fixture feed, an overstated `evaluated` denominator, a row hash that
+  changed every run); `ok conformance pack agrees: claimable=6` over 27 rows,
+  no live row changed; P3 ruled PARTIAL by construction; ALL UNCOMMITTED;
+  next = commit and watch CI.

@@ -163,6 +163,140 @@ claimable anywhere unless it is claimable here.
       == agreement
       ok conformance pack agrees: claimable=2
 
+- **2026-09-15** -- **Twins for the unfalsified checks.** Six twin rows and one
+  twin binary were added so that every live check of P1, P2, P4 and P6 is driven
+  nonzero by a twin of its own property. `sh gates/run.sh` exits 0 and ends `ok
+  conformance pack agrees: claimable=6` over **27 verdict rows** and seven
+  surfaces; P3 is the only property short of CLAIMABLE. **No live row
+  changed** -- the seven live rows of the entry above keep their check keys,
+  their `evaluated` denominators, their `result`, their `content_hash` and
+  their `scope`, compared row by row before and after.
+
+  Per property:
+
+  - **P1** -- new twin `fill_identity_key_drops_trade_id`: the at-most-once
+    identity key reads `trade_id` as null, so every fill on a venue shares the
+    first fill's identity and only that instrument keeps a position. The
+    planted duplicate is still absorbed and the planted collision still
+    refused, so the twin is confined to over-refusal. It drives
+    `positions_match_manifest` to 4 and `unevaluable_match_manifest` to 1, each
+    over an evaluated universe of 5. PARTIAL -> CLAIMABLE.
+  - **P2** -- the one combined twin is replaced by three that each run the live
+    row's own check function over one planted feed
+    (`fill_price_mutated_rechained`, `buy_and_split_reordered_rechained`,
+    `split_ratio_edited_not_rechained`), plus a fourth,
+    `per_process_nonce_in_snapshot`, described below. `chain_verifies`,
+    `fresh_process_identical` and `pinned_hash_match` are each driven nonzero.
+    PARTIAL -> CLAIMABLE.
+  - **P3** -- three new twins. `actions_admitted_by_effective_date` admits
+    actions and amendments from beyond the visible prefix by their `effective`
+    date, valid time read as knowledge time, and moves `viewpoint_V1` to 1 of
+    14. `stale_original_terms_at_V3` never applies the amendment, so the action
+    keeps the terms it was first published with, and moves `viewpoint_V3` to 3
+    of 14. `viewpoint_ignored_end_of_feed_served` answers V1 and V2 with what
+    the ledger knows at `end_seq`, collapsing the three histories into one, and
+    is the twin that drives `three_histories` to 1 of 1.
+    `positions_match_manifest` and `unevaluable_match_manifest` stay
+    unfalsified; see below. P3 stays PARTIAL.
+  - **P4** -- new twin `unpriceable_position_suppressed` deletes the withheld
+    instrument's holding and its `unevaluable` declaration together, the
+    tidier way to hide an unpriceable holding, and drives
+    `positions_match_manifest` and `unevaluable_match_manifest` to 1 each of 5.
+    PARTIAL -> CLAIMABLE.
+  - **P6** -- new twin `price_event_withheld` withholds the first price event,
+    so the fold must report that instrument unevaluable while the golden
+    fixture states `unevaluable: []`; `unevaluable_match_golden` goes to 1 of
+    3. PARTIAL -> CLAIMABLE.
+  - **P5** and **P7** are unchanged.
+
+  **Three defects in the new gate code, each found and fixed before the gate
+  ran green**, each recorded because each would have shipped a wrong number or
+  a wrong side effect:
+
+  1. `p2Check` called `feed.Open` before any existence check, and `feed.Open`
+     CREATES a missing feed
+     (`docs/learnings/2026-09-03-feed-open-is-read-write.md`). Measured on a
+     scratch copy of the tree with `fixtures/base/feed.jsonl` renamed away:
+     before the fix the run left a **0-byte** `fixtures/base/feed.jsonl`
+     behind and failed with `P2 live cell is RED: map[chain_verifies:0
+     fresh_process_identical:0 pinned_hash_match:1]` -- a gate writing into
+     `fixtures/` and then measuring the empty ledger it had just created.
+     After the fix the file is absent and the run fails at emit with `P2 live
+     check "chain_verifies" has no evaluated denominator (evaluated=0)`. The
+     gate stats the feed first.
+  2. The tampered twin published `evaluated` `chain_verifies` 71 while its
+     chain walk stops at the planted break. `Evaluated` means the universe the
+     check actually examined (`gates/verdict.go`), so the denominator now comes
+     from the walk: 71 in the rows whose walk reaches the end of the feed, and
+     **23** -- the break seq -- in that twin. The comment in
+     `fixtures/generate.py` that said the denominator was `end_seq` in every P2
+     row is corrected in place.
+  3. The nonce twin's `content_hash` was its own snapshot, which by
+     construction differs on every run, so the row pinned nothing. It now
+     carries the sha256 of the base feed file with CRLF normalized to LF -- the
+     input the twin replayed, hashed the way the tampered twin hashes its feed
+     -- and its basis says the twin binary's snapshot bytes differ on every run
+     by construction and are not recorded.
+
+  **What `per_process_nonce_in_snapshot` credits, and what it does not.** The
+  twin is a separate binary, `gates/p2nondet`: the production fold and snapshot
+  plus a 128-bit `crypto/rand` nonce stamped into the snapshot document in
+  every process. Nothing in `cmd/` or `internal/` changes for it, and the
+  production binary the live cell runs never contains that code; its
+  `planted.mutated_rows` is 0, because no input record changed. **What it
+  credits is that the gate reports non-determinism when the replayer carries
+  it** -- `fresh_process_identical` goes to 1 on a replayer whose two
+  fresh-process runs really differ. It does **not** show that the production
+  ledger can be non-deterministic, and nothing here claims it does.
+
+  *Note 2026-09-15: this resolves the P2 item of finding C28 in
+  `docs/2026-09-01-lane1-build-ledger.md`, which named `fresh_process_identical`
+  unfalsified and routed it deliberately to a comparator-discriminates test
+  rather than a twin, on the reasoning that planting non-determinism would mean
+  breaking the thing under test. It does not: the defect is planted in the
+  replayer, not in the fold, the way P7's twins plant theirs in the server. The
+  build ledger is an immutable record and is not edited. The source sentence
+  saying no honest test in this build could demonstrate the negation is
+  superseded in `gates/p2_test.go` by the twin's own doc comment, which states
+  what the twin shows and what it does not.*
+
+  *Note 2026-09-15: this reverses decision C29 in the same build ledger, which
+  routed P2's inverted twin polarity as a presentation fix -- a note in the
+  row's `scope` -- and not a logic change. It is a logic change. P2's three
+  feed twins now run the live row's own check function under the live row's own
+  check names, so a nonzero count in a P2 twin row means what it means in every
+  other twin row: the artifact failed that check. The polarity note is gone
+  from the row's `scope`, and the tampered twin must still break at the planted
+  seq or the gate fails.*
+
+  **P3 stays PARTIAL, and that is a fact about the feed, not unfinished work.**
+  `positions_match_manifest` and `unevaluable_match_manifest` are unfalsifiable
+  by construction on this feed, because the position set and the unevaluable
+  set are the same at V1, V2 and V3, so no point-in-time corporate-action
+  defect can move either. Dropping the two checks from P3's live row was
+  considered and rejected: P3 evaluates them over every viewpoint (evaluated
+  15 = 5 instruments x 3 viewpoints, from the rows) where P1 and P4 evaluate
+  them at V3 only (evaluated 5), so removal would lose the V1 and V2 coverage.
+  Extending the base feed was rejected because the defect it would plant -- an
+  action applied to an instrument never held -- is not a point-in-time defect.
+
+  `sh gates/run.sh` exited 0; its last 14 lines, unedited:
+
+      P6   | GREEN | RED*,RED*,RED*,RED* | YES
+      P7   | GREEN | RED*,RED*          | YES
+      ok lane1 claimable=6/7
+      == conformance pack over the rows
+      meridian-lane1-p1 lane1 CLAIMABLE (live GREEN, 2 twins)
+      meridian-lane1-p2 lane1 CLAIMABLE (live GREEN, 4 twins)
+      meridian-lane1-p3 lane1 PARTIAL (live GREEN, 4 twins; unfalsified: positions_match_manifest, unevaluable_match_manifest)
+      meridian-lane1-p4 lane1 CLAIMABLE (live GREEN, 3 twins)
+      meridian-lane1-p5 lane1 CLAIMABLE (live GREEN, 1 twin)
+      meridian-lane1-p6 lane1 CLAIMABLE (live GREEN, 4 twins)
+      meridian-lane1-p7 lane1 CLAIMABLE (live GREEN, 2 twins)
+      ok 27 rows conform, 7 surfaces
+      == agreement
+      ok conformance pack agrees: claimable=6
+
 ## Crediting rule
 
 A property is **CLAIMABLE** only when all three halves below hold, as
@@ -196,9 +330,14 @@ derivations:
 was added by operator ruling; both derivations enforce it as of the
 2026-09-15 entry. `Emit` writes one row at a time, so it cannot apply it.*
 
-**P4 and P7 have two twins each and P6 has three, and all of them must hold** -- one red
-twin does not credit a property that plants three defects. A gate that has
-never run red proves nothing.
+**Most properties have more than one twin, and all of them must hold** -- one
+red twin does not credit a property that plants three defects. A gate that has
+never run red proves nothing. *Corrected 2026-09-15: this line read "P4 and P7
+have two twins each and P6 has three". It is stale as of the entry above -- P1
+and P7 have two, P4 three, P2, P3 and P6 four, P5 one. Those numbers are not
+retyped as a rule here: the generated table below derives each property's twin
+count from its rows, `gates/expect.json` names every surface and its exact twin
+mutations, and `gates/run.sh` refuses the rows if they do not match it.*
 
 Verdicts are emitted as `GATE_VERDICT` rows in BASELINE's ledger schema
 (surface, lane, cell, result, per-check planted-vs-caught counts, repo sha +
@@ -223,12 +362,12 @@ generated by `python gates/claimability.py gates/out --render` from the rows of 
 
 | # | Property | Live | Twin | Status | Unfalsified |
 |---|---|---|---|---|---|
-| P1 | At-most-once fill ingestion | GREEN | RED | PARTIAL | `positions_match_manifest`, `unevaluable_match_manifest` |
-| P2 | Deterministic replay, byte-identical snapshot | GREEN | RED | PARTIAL | `chain_verifies`, `fresh_process_identical`, `pinned_hash_match` |
-| P3 | PIT-correct corporate actions (incl. amendment) | GREEN | RED | PARTIAL | `positions_match_manifest`, `three_histories`, `unevaluable_match_manifest`, `viewpoint_V1`, `viewpoint_V3` |
-| P4 | Fail-closed valuation (2 twins) | GREEN | RED | PARTIAL | `positions_match_manifest` |
+| P1 | At-most-once fill ingestion (2 twins) | GREEN | RED | CLAIMABLE | - |
+| P2 | Deterministic replay, byte-identical snapshot (4 twins) | GREEN | RED | CLAIMABLE | - |
+| P3 | PIT-correct corporate actions (incl. amendment) (4 twins) | GREEN | RED | PARTIAL | `positions_match_manifest`, `unevaluable_match_manifest` |
+| P4 | Fail-closed valuation (3 twins) | GREEN | RED | CLAIMABLE | - |
 | P5 | Reconciliation proven able to fail | GREEN | RED | CLAIMABLE | - |
-| P6 | Portfolio math (average cost, P&L) (3 twins) | GREEN | RED | PARTIAL | `unevaluable_match_golden` |
+| P6 | Portfolio math (average cost, P&L) (4 twins) | GREEN | RED | CLAIMABLE | - |
 | P7 | Wire fidelity of the gRPC read API (2 twins) | GREEN | RED | CLAIMABLE | - |
 <!-- meridian:claimability:end -->
 
@@ -236,14 +375,17 @@ Every RED above is red **for its planted reason with its exact planted
 counts**; a merely-red twin does not credit a cell.
 
 The Twin column holds one word per property because that is the schema
-`gates/claimability.py` parses, but **P4 and P7 have two twin rows each and P6
-has three**, and a single RED there means **every** one of them went red as
-planted -- the counts are in the dated entry above and the per-twin rows in
-`gates/out/`.
-P4's twins are `silent_zero_and_stale_carry_forward` and
-`valuation_omitted_without_declaring_unevaluable`; P6's are `fill_qty_plus_one`,
-`price_plus_one` and `invented_untraded_position`. P7's are
-`wrong_feed_served_as_base` and `hash_field_mislabeled`.
+`gates/claimability.py` parses, but **most properties have more than one twin
+row**, and a single RED there means **every** one of them went red as planted
+-- the per-twin rows are in `gates/out/` and the per-property twin counts are
+in the pack's output pasted in the dated entry above.
+*Corrected 2026-09-15: this paragraph read "P4 and P7 have two twin rows each
+and P6 has three", and the sentence that followed it listed P4's two, P6's
+three and P7's two twin mutations by name. Both are stale as of that entry.
+The list of twin mutations is not repeated here: `gates/expect.json` is where
+every surface's exact twin mutations are named, and `gates/run.sh` refuses the
+rows if they do not match it, so a copy here could go stale without any gate
+noticing.*
 
 The Unfalsified column is generated with the rest of the table: for each
 property, the checks its live row reports that no twin RED as planted sets
@@ -311,6 +453,37 @@ checks is now the pack's own output over the rows, pasted there.*
   defect**. No non-determinism was planted into the fold, deliberately; what
   is demonstrated is that the check could report one, not that the system
   could commit one.
+
+  *Corrected again 2026-09-15, by the twin set in the entry above: the list is
+  now one property and two checks. Over the 27 rows of that run, the pack's
+  per-property output in full (`node gates/conformance/check.mjs gates/out
+  --verify-pin --expect gates/expect.json`):*
+
+      meridian-lane1-p1 lane1 CLAIMABLE (live GREEN, 2 twins)
+      meridian-lane1-p2 lane1 CLAIMABLE (live GREEN, 4 twins)
+      meridian-lane1-p3 lane1 PARTIAL (live GREEN, 4 twins; unfalsified: positions_match_manifest, unevaluable_match_manifest)
+      meridian-lane1-p4 lane1 CLAIMABLE (live GREEN, 3 twins)
+      meridian-lane1-p5 lane1 CLAIMABLE (live GREEN, 1 twin)
+      meridian-lane1-p6 lane1 CLAIMABLE (live GREEN, 4 twins)
+      meridian-lane1-p7 lane1 CLAIMABLE (live GREEN, 2 twins)
+
+  *P3 is the only PARTIAL, and its two checks are unfalsifiable by
+  construction on this feed -- the position set and the unevaluable set are the
+  same at V1, V2 and V3 -- not unfalsified for want of a twin; the entry above
+  gives the reasoning and why neither check is dropped.
+  `three_histories` and `unevaluable_match_golden` are now each driven nonzero
+  by a twin of their own property, so the comparator-discriminates tests named
+  above are no longer what carries them; those tests remain, covering cases no
+  twin reaches.
+  The sentence "No non-determinism was planted into the fold, deliberately" is
+  superseded for P2, and only in the half a reader is most likely to overread:
+  non-determinism IS now planted, but in a twin binary (`gates/p2nondet`) that
+  calls the production fold and then stamps a per-process nonce into the
+  snapshot document it marshals -- the fold itself is untouched, nothing in
+  `cmd/` or `internal/` changed for it, and the live cell still runs the
+  production binary. `fresh_process_identical` goes to 1 on that binary. What
+  is still NOT shown is that the production ledger could commit a
+  non-deterministic replay; no claim anywhere in this repo says it could.*
 
 - **Fixture reproducibility is interpreter-dependent.** The fixtures were
   generated on **Python 3.14**, the only interpreter on the build machine, and
