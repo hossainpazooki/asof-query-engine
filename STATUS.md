@@ -297,6 +297,57 @@ claimable anywhere unless it is claimable here.
       == agreement
       ok conformance pack agrees: claimable=6
 
+- **2026-09-29** -- **The Go module moved under `ledger/`.** This is a move and
+  nothing else: nothing new is claimable, and the claimability table below is
+  unchanged. The module (`api/`, `cmd/`, `internal/`, `go.mod`, `go.sum`,
+  `buf.yaml`, `buf.gen.yaml`) and its Go gate code (every `.go` file that was in
+  `gates/`, with `gates/p2nondet/`) are now under `ledger/`, moved with `git mv`.
+  Root `gates/` keeps `run.sh`, `claimability.py`, `importpin.py`,
+  `expect.json`, `conformance/` and `out/`. `fixtures/`, `docs/`, this file and
+  the README stay at the root. The gate code moved with the module because it
+  imports the module's `internal/` packages, which Go permits only from inside
+  the tree that holds them.
+
+  **What changed besides the location.** `gates/run.sh` runs each Go step
+  (`buf generate`, `go vet`, `go build`, `go test`) with `ledger/` as its
+  working directory; no step was removed, reordered or made conditional, and the
+  step headers are the same, in the same order. The Go edits are limited to
+  relative fixtures paths that the extra directory level invalidated, and to
+  comments and one failure message that name a path; 12 changed lines in all.
+  The CI workflow gained one line,
+  `cache-dependency-path: ledger/go.sum`, and `.gitignore` re-anchored
+  `.protofresh/` to `ledger/.protofresh/`.
+
+  **What did not change.** The module path is still
+  `github.com/hossainpazooki/meridian`, no import line changed, and none of the
+  `scope`, `content_hash_basis` or `params` strings the tests pass to `Emit`
+  changed. Nothing under `fixtures/`, `gates/conformance/` or
+  `gates/expect.json` changed, and the claimability rule and both derivations of
+  it are as they were. There is no Rust and no new property.
+
+  **Measured.** `sh gates/run.sh` exited 0 on the moved tree and ended `ok
+  conformance pack agrees: claimable=6`, with `ok lane1 claimable=6/7` and `ok
+  27 rows conform, 7 surfaces` in the run. The 27 rows of that run were compared
+  with the 27 rows of a run before the move, row by row, and are identical
+  outside three fields: `gate_sha`, `gate_worktree` and `ran_at`. Those three
+  are the fields that name the emitting commit, the state of its worktree and
+  the time of the run, so they differ between any two runs; the multiset sha256
+  of the compared rows is
+  `9119d176a76a349af7dc43e04bb1d234880ea1b43bd2f49c1b330942d01a7cf8`. The run
+  before the move was on a clean tree at `1a99587`; the run after it was on the
+  working tree before the move was committed, so its rows say
+  `gate_worktree: dirty`. The generated
+  code check (`proto fresh`) was probed on the moved tree: regeneration produced
+  the same two `*.pb.go` files as are committed, and a planted one-byte
+  corruption made its `cmp` fail.
+
+  **Not run.** CI has not run on the move. The added `cache-dependency-path`
+  line in particular can be confirmed only by a CI run: the workflow's YAML
+  parses and its run step is still `sh gates/run.sh`, and that is all that was
+  checked. This entry's paths are the new ones. Older dated entries above keep
+  the paths they were written with; the path pointers in the Crediting rule and
+  Honest limits sections were updated to the new locations.
+
 ## Crediting rule
 
 A property is **CLAIMABLE** only when all three halves below hold, as
@@ -304,7 +355,7 @@ mechanically enforced by `gates/claimability.py` (which independently
 re-derives each verdict from the row's own contents rather than trusting
 the row's `result` label) and by the vendored conformance pack, whose
 derivation `gates/run.sh` requires to agree with it property by property.
-`Emit` in `gates/verdict.go` also refuses, at emit time, a row that breaks
+`Emit` in `ledger/gates/verdict.go` also refuses, at emit time, a row that breaks
 a per-row condition of the first two halves (no checks, a missing
 denominator, a RED live, a twin not RED as planted); it writes one row at a
 time, so exactly one live row per property is enforced only by the two
@@ -422,7 +473,7 @@ checks is now the pack's own output over the rows, pasted there.*
   replaced by a blank line are all **accepted** by `feed.Open`. Tail integrity
   comes from the externally pinned snapshot hash
   (`fixtures/base/snapshot.sha256`), not from the chain. The package comment
-  in `internal/feed/feed.go` states four such limits with the reasoning and the
+  in `ledger/internal/feed/feed.go` states four such limits with the reasoning and the
   measured shapes; read it there rather than trusting a summary.
 
 - **Live checks that no twin of their own property drives nonzero.** *Corrected
@@ -477,10 +528,10 @@ checks is now the pack's own output over the rows, pasted there.*
   twin reaches.
   The sentence "No non-determinism was planted into the fold, deliberately" is
   superseded for P2, and only in the half a reader is most likely to overread:
-  non-determinism IS now planted, but in a twin binary (`gates/p2nondet`) that
+  non-determinism IS now planted, but in a twin binary (`ledger/gates/p2nondet`) that
   calls the production fold and then stamps a per-process nonce into the
   snapshot document it marshals -- the fold itself is untouched, nothing in
-  `cmd/` or `internal/` changed for it, and the live cell still runs the
+  `ledger/cmd/` or `ledger/internal/` changed for it, and the live cell still runs the
   production binary. `fresh_process_identical` goes to 1 on that binary. What
   is still NOT shown is that the production ledger could commit a
   non-deterministic replay; no claim anywhere in this repo says it could.*
@@ -534,7 +585,7 @@ checks is now the pack's own output over the rows, pasted there.*
   seven cells reproduce on Linux as well as Windows.
   *Noted 2026-09-15: P7 derives CLAIMABLE under per-check crediting, and
   that does not reach (5). Crediting reads one integer per check key, and
-  `p7Check` in `gates/p7_test.go` folds both head fields (`records` and
+  `p7Check` in `ledger/gates/p7_test.go` folds both head fields (`records` and
   `prefix_hash`) into `head_matches_local`, and the mismatch-list
   difference plus the `compared` field into `reconcile_matches_local`. The
   wrong-feed twin sets both keys nonzero through their other legs (it keeps

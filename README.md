@@ -86,7 +86,11 @@ never carries counts.
 
     python fixtures/generate.py   # regenerate fixtures (deterministic; CI checks freshness)
     sh gates/run.sh               # every live gate green, every twin red for its planted reason
-    bin/meridian serve --feed fixtures/base/feed.jsonl   # read-only gRPC: Head / AsOf / Reconcile (api/meridian/v1/read.proto)
+    bin/meridian serve --feed fixtures/base/feed.jsonl   # read-only gRPC: Head / AsOf / Reconcile (ledger/api/meridian/v1/read.proto)
+
+The Go module (the ledger, its gRPC read API and its Go gate code) is under
+`ledger/`; run `go` commands from there. `gates/` at the root holds the runner,
+the Python checkers, the conformance pack and the verdict rows.
 
 Claim state is in [STATUS.md](STATUS.md).
 
