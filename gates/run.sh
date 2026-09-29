@@ -14,28 +14,30 @@ echo "== import-pin (+ negative control)"
 echo "== proto fresh"
 # Regenerate into a scratch dir and byte-compare with the committed files:
 # committed generated code must be exactly what the pinned tools produce.
-rm -rf .protofresh && mkdir -p .protofresh
-go tool buf generate -o .protofresh
-gen=$(find .protofresh/api -name '*.pb.go' | sort)
+# The Go module lives in ledger/, so every Go step runs with ledger/ as its
+# working directory; the scratch dir is ledger/.protofresh.
+rm -rf ledger/.protofresh && mkdir -p ledger/.protofresh
+(cd ledger && go tool buf generate -o .protofresh)
+gen=$(cd ledger && find .protofresh/api -name '*.pb.go' | sort)
 [ -n "$gen" ] || { echo "FAIL proto fresh: buf generate produced no *.pb.go"; exit 1; }
 for g in $gen; do
   c="${g#.protofresh/}"
-  cmp "$g" "$c" || { echo "FAIL generated $c stale: run go tool buf generate"; exit 1; }
+  cmp "ledger/$g" "ledger/$c" || { echo "FAIL generated ledger/$c stale: run (cd ledger && go tool buf generate)"; exit 1; }
 done
-for c in $(find api -name '*.pb.go' | sort); do
-  [ -f ".protofresh/$c" ] || { echo "FAIL committed $c has no regenerated counterpart: run go tool buf generate"; exit 1; }
+for c in $(cd ledger && find api -name '*.pb.go' | sort); do
+  [ -f "ledger/.protofresh/$c" ] || { echo "FAIL committed ledger/$c has no regenerated counterpart: run (cd ledger && go tool buf generate)"; exit 1; }
 done
-rm -rf .protofresh
+rm -rf ledger/.protofresh
 echo "ok proto fresh"
 
 echo "== go vet"
-go vet ./...
+(cd ledger && go vet ./...)
 
 echo "== build"
 mkdir -p bin
 BIN="$PWD/bin/meridian"
 case "$(uname -s 2>/dev/null || echo unknown)" in MINGW*|MSYS*|CYGWIN*) BIN="$BIN.exe" ;; esac
-go build -o "$BIN" ./cmd/meridian
+(cd ledger && go build -o "$BIN" ./cmd/meridian)
 
 echo "== conformance pack pin"
 # gates/conformance/PIN binds every vendored file of the conformance pack, by
@@ -60,7 +62,8 @@ echo "== claimability self-test"
 
 echo "== tests + gates"
 rm -rf gates/out && mkdir -p gates/out
-MERIDIAN_BIN="$BIN" MERIDIAN_VERDICT_DIR="$PWD/gates/out" MERIDIAN_RUNNER="${MERIDIAN_RUNNER:-local}" go test ./... -count=1
+OUT="$PWD/gates/out"
+(cd ledger && MERIDIAN_BIN="$BIN" MERIDIAN_VERDICT_DIR="$OUT" MERIDIAN_RUNNER="${MERIDIAN_RUNNER:-local}" go test ./... -count=1)
 
 echo "== claimability"
 # --status: STATUS.md may not mark a property the rows do not support.

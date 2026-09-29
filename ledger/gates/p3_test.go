@@ -92,7 +92,7 @@ func p3Check(t *testing.T, m Manifest, docs map[string]snapshot.Doc, expected ma
 		// the position set, not the union of two unevaluable lists — so
 		// it must use SetEqualityOverUniverse with that viewpoint's
 		// published positions as the universe (harness rule documented
-		// on SetEqualityOverUniverse in gates/manifest.go, kept
+		// on SetEqualityOverUniverse in ledger/gates/manifest.go, kept
 		// consistent with the other property gates).
 		tmp := NewCounts("positions_match_manifest", "unevaluable_match_manifest")
 		SetEquality(tmp, "positions_match_manifest", PositionKeys(docs[v]), m.Strs("positions_at", v))
@@ -120,7 +120,7 @@ func p3Check(t *testing.T, m Manifest, docs map[string]snapshot.Doc, expected ma
 
 // TestP3ThreeHistoriesDiscriminates proves threeHistoriesViolation's
 // arithmetic directly — the same shape as TestSetEqualityTable in
-// gates/manifest.go. The viewpoint-ignored twin in TestP3PointInTimeActions
+// ledger/gates/manifest.go. The viewpoint-ignored twin in TestP3PointInTimeActions
 // plants one collapse (all three viewpoints, through real documents); this
 // table also covers each two-viewpoint collapse, which no twin plants.
 func TestP3ThreeHistoriesDiscriminates(t *testing.T) {

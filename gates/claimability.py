@@ -2,7 +2,7 @@
 """Claimability table from GATE_VERDICT rows, and a STATUS.md overclaim check.
 
 This is the SECOND, independent enforcement of the crediting rule that the Go
-harness (gates/verdict.go, func Emit) already applies when it writes a row.
+harness (ledger/gates/verdict.go, func Emit) already applies when it writes a row.
 It must not merely trust r["result"], which Emit already set: it re-derives
 whether each twin row is RED-as-planted directly from r["checks"] vs
 r["planted"]["expected_violations"], the same way Emit itself compares them

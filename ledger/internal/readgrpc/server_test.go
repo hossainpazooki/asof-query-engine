@@ -17,7 +17,7 @@ import (
 	"github.com/hossainpazooki/meridian/internal/reconcile"
 )
 
-var fixtures = filepath.Join("..", "..", "fixtures")
+var fixtures = filepath.Join("..", "..", "..", "fixtures")
 
 // stubReader returns a fixed error from every method, so each row of the
 // status-code table can be exercised without a matching on-disk condition.

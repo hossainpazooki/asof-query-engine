@@ -281,7 +281,7 @@ func blankFlag(args []string, flag string) {
 
 func TestServeAnswersHeadOverTCP(t *testing.T) {
 	bin := build(t)
-	feedPath := filepath.Join("..", "..", "fixtures", "base", "feed.jsonl")
+	feedPath := filepath.Join("..", "..", "..", "fixtures", "base", "feed.jsonl")
 	cmd := exec.Command(bin, "serve", "--feed", feedPath, "--listen", "127.0.0.1:0")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

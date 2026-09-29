@@ -16,7 +16,7 @@ import (
 	"github.com/hossainpazooki/meridian/internal/snapshot"
 )
 
-const FixturesDir = "../fixtures"
+const FixturesDir = "../../fixtures"
 
 type Manifest map[string]any
 

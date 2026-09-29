@@ -10,6 +10,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
+          # The Go module lives in ledger/, not at the repo root.
+          cache-dependency-path: ledger/go.sum
       - uses: actions/setup-python@v5
         with:
           # Pinned to the interpreter the checked-in fixtures were actually

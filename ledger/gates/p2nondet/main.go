@@ -1,4 +1,4 @@
-// Command p2nondet is P2's non-deterministic replay twin. gates/p2_test.go
+// Command p2nondet is P2's non-deterministic replay twin. ledger/gates/p2_test.go
 // builds it into a temp directory and runs the live cell's own checks with
 // it; nothing else builds or ships it, and nothing in cmd/ or internal/
 // changes for it, so the production binary the live cell runs never contains

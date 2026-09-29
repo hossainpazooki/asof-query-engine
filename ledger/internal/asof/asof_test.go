@@ -74,7 +74,7 @@ func TestReadDoesNotPanicOnHostileFeedContent(t *testing.T) {
 }
 
 func TestReadFromEqualsRead(t *testing.T) {
-	path := filepath.Join("..", "..", "fixtures", "base", "feed.jsonl")
+	path := filepath.Join("..", "..", "..", "fixtures", "base", "feed.jsonl")
 	viaPath, err := Read(path, -1)
 	if err != nil {
 		t.Fatal(err)

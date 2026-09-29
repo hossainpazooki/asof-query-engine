@@ -14,7 +14,7 @@ import (
 	"github.com/hossainpazooki/meridian/internal/reconcile"
 )
 
-var fixtures = filepath.Join("..", "..", "fixtures")
+var fixtures = filepath.Join("..", "..", "..", "fixtures")
 
 func base() string { return filepath.Join(fixtures, "base", "feed.jsonl") }
 

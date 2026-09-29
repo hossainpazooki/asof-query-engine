@@ -113,7 +113,7 @@ func TestReconcileFailsClosedOnMissingPositionsKey(t *testing.T) {
 }
 
 func TestLoadStatementBytesMatchesLoadStatement(t *testing.T) {
-	path := filepath.Join("..", "..", "fixtures", "base", "statement.json")
+	path := filepath.Join("..", "..", "..", "fixtures", "base", "statement.json")
 	fromPath, err := LoadStatement(path)
 	if err != nil {
 		t.Fatal(err)

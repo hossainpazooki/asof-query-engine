@@ -28,7 +28,7 @@ func binary(t *testing.T) string {
 	return bin
 }
 
-// p2NondetBinary builds gates/p2nondet, P2's non-deterministic replay twin
+// p2NondetBinary builds ledger/gates/p2nondet, P2's non-deterministic replay twin
 // (see its package doc), into a temp dir. It is never MERIDIAN_BIN: the live
 // cell always runs the production binary.
 func p2NondetBinary(t *testing.T) string {
@@ -160,7 +160,7 @@ func TestP2DeterministicReplay(t *testing.T) {
 	base := filepath.Join(FixturesDir, "base", "feed.jsonl")
 	pinRaw, err := os.ReadFile(filepath.Join(FixturesDir, "base", "snapshot.sha256"))
 	if err != nil {
-		t.Fatalf("pin missing: run `go run ./cmd/meridian snapshot --feed fixtures/base/feed.jsonl --out /tmp/x` and write the hash to fixtures/base/snapshot.sha256")
+		t.Fatalf("pin missing: run `cd ledger && go run ./cmd/meridian snapshot --feed ../fixtures/base/feed.jsonl --out <dir>` and write the hash to fixtures/base/snapshot.sha256")
 	}
 	pin := strings.TrimSpace(string(pinRaw))
 	end := m.Int("end_seq")

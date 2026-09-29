@@ -25,7 +25,7 @@ import (
 // — when the two sets being compared aren't themselves the full scope of
 // the assertion — a caller-declared universe (see SetEqualityOverUniverse).
 // Both the len(want) denominator bug and the once-vacuous
-// TestEmitRejectsWrongCells cases (gates/verdict_test.go) came from this
+// TestEmitRejectsWrongCells cases (ledger/gates/verdict_test.go) came from this
 // distinction being implicit rather than written down: a reader (or a test
 // author copying NewCounts's zero default) could not tell "the denominator
 // IS the target size" from "the denominator is unrelated to the target
