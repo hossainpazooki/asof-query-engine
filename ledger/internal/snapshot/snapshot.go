@@ -25,6 +25,13 @@ func n(i int64) json.Number { return json.Number(strconv.FormatInt(i, 10)) }
 // malformed input becomes an error here, never a crash, mirroring fold's own
 // documented invariant that malformed input becomes a refusal, never a panic.
 func Build(s fold.State, prefixHash string) (Doc, []byte, string, error) {
+	return BuildAt(s, prefixHash, "")
+}
+
+// BuildAt is Build for a read at an effective date: when effective is
+// non-empty the document carries it under the key "effective" and nothing
+// else differs. With effective == "" the bytes are Build's, byte for byte.
+func BuildAt(s fold.State, prefixHash, effective string) (Doc, []byte, string, error) {
 	positions := map[string]any{}
 	for inst, p := range s.Positions {
 		var val any
@@ -50,6 +57,9 @@ func Build(s fold.State, prefixHash string) (Doc, []byte, string, error) {
 		"feed_prefix_hash": prefixHash, "feed_seq": n(s.Seq), "positions": positions,
 		"realized_pnl": n(s.RealizedPnL), "refusals": refusals, "unevaluable": unev,
 		"unrealized_pnl": n(s.UnrealizedPnL()),
+	}
+	if effective != "" {
+		doc["effective"] = effective
 	}
 	b, err := canon.Marshal(doc)
 	if err != nil {

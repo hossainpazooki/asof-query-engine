@@ -132,8 +132,12 @@ type applicable struct {
 
 // Fold folds records with Seq <= upTo per the shared contract.
 func Fold(records []feed.Record, upTo int64) (State, error) {
-	if upTo < 0 || upTo > int64(len(records)) {
-		return State{}, fmt.Errorf("fold: upTo %d out of range [0,%d]", upTo, len(records))
+	// upTo is a Seq, not an index: a caller may hand Fold a slice shorter
+	// than upTo (asof.ReadAt removes the records effective after E and
+	// still names V), so the slice's length bounds nothing. Only a negative
+	// upTo is out of range. (Design amendment A17, 2026-11-03.)
+	if upTo < 0 {
+		return State{}, fmt.Errorf("fold: upTo %d out of range (negative)", upTo)
 	}
 	st := State{Seq: upTo, Positions: map[string]Position{}, Valuations: map[string]Valuation{},
 		Unevaluable: []Unevaluable{}, Absorbed: []Absorbed{}, Refusals: []Refusal{}}

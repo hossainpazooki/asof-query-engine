@@ -47,11 +47,12 @@ Evidence is from the tree at `6ddc4f6` unless a row says otherwise.
 | A9 | The generator's naive fold "gains nothing". | §5 has the generator measure twin counts that depend on `E`; `naive_fold` already takes a `mode` for modelled defects. | It gains the filter and the modes, and stays import-pinned (§0, §7). |
 | A10 | "The README claim-language grep extends to…", including a bare `x`. | No such grep is a gate step. The only one is a command quoted in a plan document. A bare `x` matches most prose. | A new gate step with a negative control; the multiplier is a pattern, not a letter (§6). |
 | A11 | Seq ranges `[0..V]`; events apply "in feed order"; twin binaries in `gates/bin/`; CI measured on `ubuntu-24.04`. | Seq starts at 1. The fold applies in `(effective, seq)` order. Build output is root `bin/` (gitignored). The workflow names `ubuntu-latest`. | Corrected in place. |
-| A12 | *(unruled)* — | A pre-apply checkpoint built without a filter has already deduplicated fills over records a filter may remove. | A checkpoint is usable for `(V, E)` only when its whole prefix is visible at `E` (§4). |
-| A13 | *(unruled)* The harness sets `K = 2` for one twin; default `K` is 1024. | Base has 71 events. At `K = 1024` the live cell has only the empty checkpoint, and `index_equals_recompute` compares recompute with itself. | The live cell and every P8 twin run at the manifest's `p8.checkpoint_every`, 2 on base (§5, P8). |
-| A14 | *(unruled)* P8 evaluates 3 × 3 = 9 pairs, all with `E`. | The read that exists today, `AsOf(V)` without `E`, was compared by no check. | The universe is `viewpoints × (effective_dates + the unfiltered read)`, 3 × 4 = 12 (§5). |
-| A15 | *(unruled)* P9 has two twins. | Crediting is per check (`gates/claimability.py`): a live check no twin drives nonzero is unfalsified and blocks CLAIMABLE, as it does for P3. `no_read_creates_or_writes` had no twin. | A third P9 twin; 36 rows, not 34 (§5, §7). |
-| A16 | *(unruled)* — | What a read does with an amendment whose action `E` hides was not stated. | Stated as the consequence of filtering records: refused `unknown_action` (§1). Unexercised on base, and named as a limit (§5). |
+| A12 | *(ruled 2026-11-03, as proposed)* — | A pre-apply checkpoint built without a filter has already deduplicated fills over records a filter may remove. | A checkpoint is usable for `(V, E)` only when its whole prefix is visible at `E` (§4). |
+| A13 | *(ruled 2026-11-03, as proposed)* The harness sets `K = 2` for one twin; default `K` is 1024. | Base has 71 events. At `K = 1024` the live cell has only the empty checkpoint, and `index_equals_recompute` compares recompute with itself. | The live cell and every P8 twin run at the manifest's `p8.checkpoint_every`, 2 on base (§5, P8). |
+| A14 | *(ruled 2026-11-03, as proposed)* P8 evaluates 3 × 3 = 9 pairs, all with `E`. | The read that exists today, `AsOf(V)` without `E`, was compared by no check. | The universe is `viewpoints × (effective_dates + the unfiltered read)`, 3 × 4 = 12 (§5). |
+| A15 | *(ruled 2026-11-03, as proposed)* P9 has two twins. | Crediting is per check (`gates/claimability.py`): a live check no twin drives nonzero is unfalsified and blocks CLAIMABLE, as it does for P3. `no_read_creates_or_writes` had no twin. | A third P9 twin; 36 rows, not 34 (§5, §7). |
+| A16 | *(ruled 2026-11-03, as proposed)* — | What a read does with an amendment whose action `E` hides was not stated. | Stated as the consequence of filtering records: refused `unknown_action` (§1). Unexercised on base, and named as a limit (§5). |
+| A17 | 2026-11-03. Section 3: `internal/fold` is untouched; `ReadAt` hands the filtered slice to `fold.Fold`, whose contract holds for any slice. | `Fold` first refused `upTo > len(records)`. The slice `ReadAt` hands it is shorter than `V` whenever `E` hides a record, so every filtered read would have failed before folding. | The bound check is stated over `Seq`: only a negative `upTo` is out of range; the feed layer still refuses a `seq` beyond the feed (the prefix hash is read there first). One check in the fold changes; the fold still does not know about `E`. Built by the lane as the minimum that makes section 3 true; operator ruling 2026-11-03, accepted as built (option a of the lane's ask). |
 
 One correction to the review itself: it counted "2 effective-date inversions"
 on base as evidence for A1. Both are at seq 48–49, and they are the amendment
@@ -126,8 +127,9 @@ Move mechanics, first commit of the build:
    and the proto-fresh check from `ledger/`; the gate package's fixtures path
    gains one level; CI paths follow.
 2. Re-run `sh gates/run.sh`. Gate for the move: **all 27 rows byte-identical
-   to `6ddc4f6`'s rows** except `gate_sha`/`gate_worktree`, compared row by
-   row. A move that changes a `content_hash` is a bug, not a migration.
+   to `6ddc4f6`'s rows** except `gate_sha`/`gate_worktree`/`ran_at`, the three
+   run fields (amended 2026-11-03 from two: `ran_at` moves on every run, and
+   the measured comparison of the move excluded it), compared row by row. A move that changes a `content_hash` is a bug, not a migration.
 3. `gh repo rename asof-query-engine` — **operator action, not the session's.**
    The session updates `README.md`, `STATUS.md`, `.github/` and `docs/*-design.md`
    links to the new URL and sets the local remote. Handoff and learning entries
@@ -141,9 +143,12 @@ separate commit after P8's live row lands, gated the same way: 36 rows, all
 
 - `internal/asof`: `Read(feed, seq)` gains `ReadAt(feed, seq, effective)`.
   `Read` calls `ReadAt` with no effective date; no behaviour change.
-- `internal/fold`: **untouched.** `ReadAt` removes the records effective
-  after `E` and hands the rest to `fold.Fold`, whose contract is already
+- `internal/fold`: **one bound check (A17).** `ReadAt` removes the records
+  effective after `E` and hands the rest to `fold.Fold`, whose contract is
   stated over `Seq` and over any slice a caller hands it, contiguous or not.
+  The one check that was stated over the slice's length, `upTo > len`, is
+  stated over `Seq` instead: only a negative `upTo` is out of range, and a
+  `seq` beyond the feed is refused by the feed layer before the fold runs.
   The fold does not know about `E`. The prefix hash is read from the
   unfiltered feed.
 - `internal/snapshot`: canonical encoder emits `effective` when set. When
@@ -227,7 +232,11 @@ action, the split alone, and both: the P3 three-histories argument on the E
 axis, stated over actions because fills alone would make any three dates
 differ. A **pair** is a viewpoint with one of the three dates or with no date:
 3 × 4 = 12 on base. Any two distinct pairs differ in bytes, by `feed_seq` or
-by `effective`.
+by `effective`; that is the universe's size, by construction, not evidence of
+separation. Separation on the `E` axis is asserted at V3 with the `effective`
+key stripped: the three dates fold to three different states, and the feed's
+last effective date folds to the unfiltered read (generator guard and Go test,
+2026-11-03).
 
 ### P8 — Cross-language byte identity
 
@@ -407,7 +416,8 @@ other than the one CI ran.
    trivially 0; then `index` and `read`; four twins; P8 claimable. Two commits
    (core, then index + twins).
 4. **Concurrency → P9** — harness, three twins. One commit.
-5. **Module-path flip** — gate: 36 rows unchanged. One commit.
+5. **Module-path flip** — gate: 36 rows unchanged outside the same three run
+   fields. One commit.
 6. **Bench** — `--scale`, pin, `bench`, STATUS section, `claimwords.py`.
    One commit. Handoff and learning entries close the build.
 

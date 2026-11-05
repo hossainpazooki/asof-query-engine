@@ -207,9 +207,18 @@ func TestMalformedAndUnknownActionAreRefusals(t *testing.T) {
 	}
 }
 
-func TestFoldUpToBeyondFeedIsError(t *testing.T) {
-	if _, err := Fold(records(price("2026-01-05", "AAA", 1)), 2); err == nil {
-		t.Fatal("expected error")
+// Until step 2 this test pinned the opposite: Fold refused upTo beyond the
+// slice's length. Design amendment A17 (2026-11-03) moves that bound to the
+// feed layer, where asof reads the prefix hash at seq from the unfiltered
+// feed and errors there; the fold itself selects by Seq, so a slice shorter
+// than upTo folds. The negative bound stays (TestFoldAcceptsUpToBeyondSliceLength).
+func TestFoldUpToBeyondSliceFoldsBySeq(t *testing.T) {
+	s, err := Fold(records(price("2026-01-05", "AAA", 1)), 2)
+	if err != nil {
+		t.Fatalf("upTo 2 over a 1-record slice must fold by Seq: %v", err)
+	}
+	if s.Seq != 2 {
+		t.Fatalf("State.Seq must be upTo, got %d", s.Seq)
 	}
 }
 

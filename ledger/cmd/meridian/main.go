@@ -173,13 +173,14 @@ func runCLI(args []string) int {
 		}
 		fmt.Printf("%s %s\n", r.Hash, p)
 	case "asof":
+		eff := fs.String("effective", "", "effective date YYYY-MM-DD (default: no date filter)")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 1
 		}
 		if err := requireFeedExists(*feedPath); err != nil {
 			return fail(err)
 		}
-		r, err := asof.Read(*feedPath, *seq)
+		r, err := asof.ReadAt(*feedPath, *seq, *eff)
 		if err != nil {
 			return fail(err)
 		}

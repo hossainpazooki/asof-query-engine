@@ -215,8 +215,18 @@ def fill_key(p):
 
 
 # ---------- naive fold (independent of the Go tree) ----------
-def naive_fold(records, up_to, mode="honest"):
+def naive_fold(records, up_to, mode="honest", effective=None):
     """Fold records[0:up_to] per the shared contract.
+
+    effective: None reads at the viewpoint alone (today's AsOf(V)). A date
+    string YYYY-MM-DD reads at (V, E): records of the prefix whose effective
+    date is after it are removed before the fold, feed_seq and
+    feed_prefix_hash still name V, and the snapshot carries the key
+    "effective" (design A12-A16, ruled 2026-11-03). An amendment visible at
+    (V, E) whose action E hides dies here rather than being refused
+    unknown_action as the Go fold does: the base feed cannot produce that
+    case (the amendment shares its action's date, A5), and this generator
+    treats it as a fixture defect. Named limit (design A16, section 5).
 
     mode: honest | nodedupe (P1 twin: apply every fill) | identitycollapse
     (P1 identity-collapse twin: the dedupe key reads trade_id as null, so
@@ -237,6 +247,10 @@ def naive_fold(records, up_to, mode="honest"):
         # feed_prefix_hash below still name the requested viewpoint.
         asof = max(r["effective"] for r in vis)
         vis = vis + [r for r in records[up_to:] if r["type"] in ("action", "action_amendment") and r["effective"] <= asof]
+    if effective is not None:
+        # The effective axis is a filter over the prefix, not a different
+        # prefix: the date compare is lexical over YYYY-MM-DD.
+        vis = [r for r in vis if r["effective"] <= effective]
     src_terms = records if mode == "leak" else vis
     terms = {}
     for r in src_terms:
@@ -325,9 +339,12 @@ def naive_fold(records, up_to, mode="honest"):
             unev.append({"instrument": inst, "reason": "no_price_in_prefix"})
     refusals.sort(key=lambda r: r["seq"])
     prefix = ("sha256:" + records[up_to - 1]["line_hash"]) if up_to > 0 else "sha256:" + GENESIS
-    return {"absorbed": absorbed, "cash": cash, "dividend_income": dividends, "feed_prefix_hash": prefix,
+    snap = {"absorbed": absorbed, "cash": cash, "dividend_income": dividends, "feed_prefix_hash": prefix,
             "feed_seq": up_to, "positions": positions, "realized_pnl": realized, "refusals": refusals,
             "unevaluable": unev, "unrealized_pnl": unreal}
+    if effective is not None:
+        snap["effective"] = effective
+    return snap
 
 
 def expected_view(doc):
@@ -550,6 +567,51 @@ def main():
     for name, v in (("V1", V1), ("V2", V2), ("V3", V3)):
         write_json(P("base", "expected", name + ".json"), expected_view(honest[v]))
     write_json(P("base", "statement.json"), statement(honest[V3]))
+    # ----- effective-date axis (design A5, A14, A16; build step 2) -----
+    # Three dates placed around the two corporate ACTIONS, not the
+    # amendment: on base the amendment shares its action's effective date,
+    # so only the V axis separates them (A5). The dates are the day before
+    # the first action's effective date, the day before the second's, and
+    # the feed's last effective date; the guard is stated over which actions
+    # are visible at each date, not over the dates themselves.
+    def day_before(iso):
+        return (dt.date.fromisoformat(iso) - dt.timedelta(days=1)).isoformat()
+    actions = sorted((r for r in recs if r["type"] == "action"), key=lambda r: r["seq"])
+    if len(actions) != 2:
+        die("effective_dates rule expects exactly two actions on base, found %d" % len(actions))
+    effective_dates = [day_before(actions[0]["effective"]), day_before(actions[1]["effective"]), max(r["effective"] for r in recs)]
+    if effective_dates != sorted(effective_dates) or len(set(effective_dates)) != 3:
+        die("effective_dates must be three distinct ascending dates: %r" % effective_dates)
+    visible_kinds = [[a["payload"]["kind"] for a in actions if a["effective"] <= e] for e in effective_dates]
+    if visible_kinds != [[], [actions[0]["payload"]["kind"]], [a["payload"]["kind"] for a in actions]]:
+        die("visible-actions guard: expected no action, then the first, then both; got %r" % visible_kinds)
+    # A14, universe size: viewpoints x (effective_dates + the unfiltered
+    # read) is 12 documents on base. Their bytes differ by construction
+    # (feed_seq, or the effective key), so this counts the universe and is
+    # not evidence that the date axis separates folded state.
+    pairs = {}
+    for name, v in (("V1", V1), ("V2", V2), ("V3", V3)):
+        for e in [None] + effective_dates:
+            b = canon(naive_fold(recs, v, effective=e))
+            if b in pairs:
+                die("A14: (%s, %s) and (%s, %s) fold to the same bytes" % (pairs[b] + (name, e)))
+            pairs[b] = (name, e)
+    if len(pairs) != 12:
+        die("A14: expected 12 distinct (viewpoint, date) pairs, got %d" % len(pairs))
+    # Separation on the E axis alone: at V3 feed_seq is fixed, and with
+    # the effective key stripped the three dates must fold to three
+    # different states (no action, the split, both), while the last date,
+    # the feed's last effective, folds to the unfiltered read.
+    def state_at_v3(e):
+        d = naive_fold(recs, V3, effective=e)
+        d.pop("effective", None)
+        return canon(d)
+    by_date = [state_at_v3(e) for e in effective_dates]
+    if len(set(by_date)) != 3:
+        die("effective_dates do not separate folded state at V3 with the effective key stripped")
+    if by_date[2] != state_at_v3(None):
+        die("the feed's last effective date must fold to the unfiltered read at V3")
+
     q1, q2, q3 = (honest[v]["positions"]["AAA"]["qty"] for v in (V1, V2, V3))
     if len({q1, q2, q3}) != 3:
         die("three viewpoints must give three AAA quantities: %d %d %d" % (q1, q2, q3))
@@ -1210,6 +1272,7 @@ def main():
     man = {
         "seed": SEED, "instruments": INSTRUMENTS, "end_seq": N,
         "viewpoints": {"V1": V1, "V2": V2, "V3": V3},
+        "effective_dates": effective_dates,
         "positions_at": positions_at, "unevaluable_at": unevaluable_at,
         "action": {"action_id": "CA-0001", "instrument": "AAA", "seq": split_seq, "amendment_seq": amend_seq, "original_ratio": 2, "amended_ratio": 3},
         "p1": {"duplicate": {"seq": dup["seq"], "event_id": dup["id"], "of_seq": dup_of_seq, "key": fill_key(dup["payload"])},
