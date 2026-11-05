@@ -348,6 +348,12 @@ claimable anywhere unless it is claimable here.
   the paths they were written with; the path pointers in the Crediting rule and
   Honest limits sections were updated to the new locations.
 
+  *Corrected 2026-11-03: CI has since run on the move. Run 36639525532 on
+  `4fa75b4` (2026-09-29T22:25Z) and run 36646568972 on `43e23cd` both
+  succeeded; the `setup-go` step of 36639525532 logged
+  `cache-dependency-path: ledger/go.sum` and `Cache restored successfully`,
+  so the added line resolved.*
+
 ## Crediting rule
 
 A property is **CLAIMABLE** only when all three halves below hold, as
