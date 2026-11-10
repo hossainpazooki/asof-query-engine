@@ -58,3 +58,9 @@ session writes a new entry, never edits an old one.
   rows are unchanged outside three run fields, CI is green on `4fa75b4`; the
   repository is renamed `asof-query-engine`; next = rulings on A12-A16, then
   the effective-date axis in Go.
+- 2026-11-10 -- as-of step 2 landed (the brief is kept outside this
+  repository, as every handoff brief is from 2026-11-05) -- A12-A17 are ruled;
+  build step 2 of 6 is done: the effective-date axis in Go (`ReadAt`,
+  `--effective`) is on main at `14184b2`, CI is green on `b398a0f`, the P1-P7
+  verdict rows are unchanged outside three run fields; next = step 3, the Rust
+  engine core and P8.
